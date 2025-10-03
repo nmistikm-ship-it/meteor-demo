@@ -109,9 +109,4 @@ If you'd like, I will keep this section updated every time we change start scrip
 
 Recent automated changes will be appended here.
 
-High-resolution textures (USGS)
---------------------------------
 
-The UI's "Load High-res Earth Texture" button will prompt you for a texture URL. Paste a USGS-provided texture URL (or another remote texture) and the app will try to load it first. If it fails (CORS/network), the app falls back to the built-in defaults.
-
-Note: USGS API integration is not implemented yet — you'll provide details for that later. For now, the URL prompt lets you point the app at any public texture you have access to.
