@@ -726,26 +726,26 @@ class App {
   // (1 scene unit == 1000 km because SCENE_SCALE = 1e6 m / scene unit).
   const MIN_MET = 0.1; // meters slider min
   const MAX_MET = 50.0; // meters slider max
-  // Representative country areas (km^2) for visual anchors: Andorra (tiny) -> Montenegro (mid) -> Slovenia (larger)
-  const AREA_ANDORRA = 468; // km^2
-  const AREA_MONTENEGRO = 13812; // km^2
-  const AREA_SLOVENIA = 20273; // km^2
-  const radiusAndorra = Math.sqrt(AREA_ANDORRA / Math.PI) / 1000.0;
+  // Representative country areas (km^2) for visual anchors: Montenegro (small), Hungary (medium), Poland (large)
+  const AREA_MONTENEGRO = 13812; // km^2 (Montenegro)
+  const AREA_HUNGARY = 93030; // km^2 (Hungary)
+  const AREA_POLAND = 312679; // km^2 (Poland)
   const radiusMontenegro = Math.sqrt(AREA_MONTENEGRO / Math.PI) / 1000.0;
-  const radiusSlovenia = Math.sqrt(AREA_SLOVENIA / Math.PI) / 1000.0;
+  const radiusHungary = Math.sqrt(AREA_HUNGARY / Math.PI) / 1000.0;
+  const radiusPoland = Math.sqrt(AREA_POLAND / Math.PI) / 1000.0;
 
   // normalize input size (0..1)
   const tRaw = (sizeMeters - MIN_MET) / (MAX_MET - MIN_MET);
   const t = Math.max(0, Math.min(1, tRaw));
-  // bias toward Montenegro for mid values
-  const gamma = 2.0; // tuned so ~25m maps near Montenegro radius
+  // bias so mid values map near Hungary
+  const gamma = 1.8;
   const tAdj = Math.pow(t, gamma);
-  // interpolate between Andorra and Slovenia radii
-  const visualBase = radiusAndorra + (radiusSlovenia - radiusAndorra) * tAdj;
+  // interpolate between Montenegro and Poland radii (Hungary sits mid-range)
+  const visualBase = radiusMontenegro + (radiusPoland - radiusMontenegro) * tAdj;
 
-    // Create ring geometry sized relative to visualBase
-  const ringInner = visualBase * 0.30;
-  const ringOuter = visualBase * 0.85;
+    // Create ring geometry sized relative to visualBase (larger inner/outer multipliers so rings read bigger)
+  const ringInner = visualBase * 0.35;
+  const ringOuter = visualBase * 1.05;
     const ringSegs = Math.max(32, Math.floor(16 + visualBase * 64));
     const geo = new THREE.RingGeometry(ringInner, ringOuter, ringSegs);
     const mat = new THREE.MeshBasicMaterial({ color:0xff4400, side:THREE.DoubleSide, transparent:true, opacity:0.95, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: 1 });
@@ -857,7 +857,7 @@ class App {
       mushroom.position.copy(surfacePos);
       const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), normal.clone());
       mushroom.quaternion.copy(q);
-      mushroom.scale.setScalar(0.6);
+  mushroom.scale.setScalar(0.85);
       this.scene.add(mushroom);
 
       // Ensure each mushroom material stores a base opacity so we can set a deterministic fade
