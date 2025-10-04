@@ -143,10 +143,8 @@ class App {
   dirLight.position.set(10, 10, 10);
   dirLight.castShadow = false;
   this.scene.add(dirLight);
-  // camera-attached point light (disabled by default so camera doesn't act like a flashlight)
-  const cameraLight = new THREE.PointLight(0xffeecc, 0.0, 100);
-  cameraLight.name = 'cameraLight';
-  this.camera.add(cameraLight);
+  // camera-attached point light has been removed per user preference
+  // (previously a point light was attached to the camera which created an inconsistent "flashlight" effect)
 
   // cursor placeholder (invisible) — HTML overlay replaces the on-screen pointer
   // We keep a minimal Object3D so existing code that reads/writes this.cursor.position
@@ -178,6 +176,15 @@ class App {
 
     // wire basic UI elements safely
     const el = id => document.getElementById(id);
+    // add a small HUD badge inside the UI for a futuristic accent (purely decorative)
+    try{
+      const uiRoot = document.getElementById('ui');
+      if(uiRoot){
+        const badge = document.createElement('div'); badge.className = 'hud-badge'; badge.title = 'HUD'; uiRoot.appendChild(badge);
+        // subtle outline class applied so the panel reads like an HUD
+        uiRoot.classList.add('hud-outline');
+      }
+    }catch(e){}
     if (el('simSpeed')) el('simSpeed').oninput = (e) => { this.simSpeed = parseFloat(e.target.value); if (el('simSpeedVal')) el('simSpeedVal').innerText = parseFloat(e.target.value).toFixed(2); };
     if (el('speed')) { const s = el('speed'); if (el('speedVal')) el('speedVal').innerText = s.value; s.oninput = (e) => { if (el('speedVal')) el('speedVal').innerText = parseFloat(e.target.value).toFixed(2); }; }
     if (el('reset')) el('reset').onclick = () => this.resetScene();
