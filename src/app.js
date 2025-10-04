@@ -95,31 +95,32 @@ class App {
     const aimEl = document.createElement('div');
     aimEl.id = 'aimCursor';
     Object.assign(aimEl.style, {
-      position: 'fixed',
-      left: '0px',
-      top: '0px',
-      width: '18px',
-      height: '18px',
-      transform: 'translate(-50%, -50%)',
-      borderRadius: '50%',
-      background: 'rgba(255,170,0,0.7)',
-      pointerEvents: 'none',
-      display: 'none',
-      zIndex: 2000
+      position: 'fixed', left: '0px', top: '0px',
+      width: '18px', height: '18px', transform: 'translate(-50%, -50%)',
+      borderRadius: '50%', background: 'transparent',
+      border: '2px solid rgba(255,170,0,0.95)', pointerEvents: 'none', display: 'none', zIndex: 2000
     });
     document.body.appendChild(aimEl);
     this.aimCursor = aimEl;
+    // void cursor: small dot shown only when pointer is over empty space
+    const voidEl = document.createElement('div');
+    voidEl.id = 'voidCursor';
+    Object.assign(voidEl.style, {
+      position: 'fixed', left: '0px', top: '0px', width: '8px', height: '8px',
+      transform: 'translate(-50%, -50%)', borderRadius: '50%',
+      background: 'rgba(255,170,0,0.9)', pointerEvents: 'none', display: 'none', zIndex: 1999
+    });
+    document.body.appendChild(voidEl);
+    this.voidCursor = voidEl;
     this._pointerOverCanvas = false; // track if the mouse is currently over the renderer canvas
 
-    // show/hide aim when pointer enters/leaves the canvas
-    this.renderer.domElement.addEventListener('mouseenter', () => {
-      this._pointerOverCanvas = true;
-      if(this.showAiming){ this.aimCursor.style.display = 'block'; this.renderer.domElement.style.cursor = 'none'; }
-    });
+    // track entry/exit; visibility is decided in onMouseMove
+    this.renderer.domElement.addEventListener('mouseenter', () => { this._pointerOverCanvas = true; });
     this.renderer.domElement.addEventListener('mouseleave', () => {
       this._pointerOverCanvas = false;
-      this.aimCursor.style.display = 'none';
-      this.renderer.domElement.style.cursor = '';
+      if(this.aimCursor) this.aimCursor.style.display = 'none';
+      if(this.voidCursor) this.voidCursor.style.display = 'none';
+      if(this.renderer && this.renderer.domElement) this.renderer.domElement.style.cursor = '';
     });
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -191,7 +192,11 @@ class App {
         else { this.aimCursor.style.display = 'none'; this.renderer.domElement.style.cursor = ''; }
       }
     };
-  if (el('fire')) el('fire').onclick = () => this.shootMeteor();
+  if (el('fire')){
+    // prevent the button from receiving focus (which causes the UI to scroll)
+    el('fire').onmousedown = (e) => { e.preventDefault(); };
+    el('fire').onclick = (e) => { this.shootMeteor(); try{ e.currentTarget && e.currentTarget.blur && e.currentTarget.blur(); }catch(_){} };
+  }
   // wire meteor size UI
   const ms = el('meteorSize'); if(ms){ const mv = el('meteorSizeVal'); mv.innerText = ms.value; ms.oninput = (e)=>{ if(mv) mv.innerText = parseFloat(e.target.value).toFixed(1); }; }
     if (el('loadMore')) el('loadMore').onclick = () => this.fetchAsteroidList(true);
@@ -205,6 +210,11 @@ class App {
     if(uiRoot){
       uiRoot.addEventListener('mouseenter', ()=>{ this.aimCursor.style.display = 'none'; if(this.renderer && this.renderer.domElement) this.renderer.domElement.style.cursor = ''; });
       uiRoot.addEventListener('mouseleave', ()=>{ if(this._pointerOverCanvas && this.showAiming){ this.aimCursor.style.display = 'block'; this.renderer.domElement.style.cursor = 'none'; } });
+      // Prevent any button in the UI from taking focus on mousedown (stops scrolling-to-bottom)
+      try{
+        const buttons = uiRoot.querySelectorAll('button');
+        buttons.forEach(b => { b.onmousedown = (e) => { e.preventDefault(); }; });
+      }catch(e){}
     }
 
     // initial aiming visibility
@@ -285,22 +295,25 @@ class App {
 
       // position the HTML aim cursor only when pointer is over the canvas, aiming is enabled,
       // and the ray actually hits the Earth or a meteor. Otherwise hide it so it isn't visible in space.
-      if(this.aimCursor && this._pointerOverCanvas && this.showAiming && hitPoint){
-        // show overlay and position it
-        this.aimCursor.style.display = 'block';
-        this.aimCursor.style.left = `${event.clientX}px`;
-        this.aimCursor.style.top = `${event.clientY}px`;
-        // ensure native cursor hidden while over canvas and hovering a valid object
+      if(this._pointerOverCanvas && this.showAiming && hitPoint){
+        // show crosshair when over Earth/meteor
+        if(this.aimCursor){ this.aimCursor.style.display = 'block'; this.aimCursor.style.left = `${event.clientX}px`; this.aimCursor.style.top = `${event.clientY}px`; }
+        if(this.voidCursor) this.voidCursor.style.display = 'none';
         if(this.renderer && this.renderer.domElement) this.renderer.domElement.style.cursor = 'none';
-      } else if(this.aimCursor && this._pointerOverCanvas && this.showAiming){
-        // pointer over canvas but in empty space -> hide overlay and also hide native cursor
-        // so nothing is visible in the 'void' area.
-        this.aimCursor.style.display = 'none';
+      } else if(this._pointerOverCanvas && this.showAiming && !hitPoint){
+        // pointer over canvas but in empty space -> show void dot only
+        if(this.voidCursor){ this.voidCursor.style.display = 'block'; this.voidCursor.style.left = `${event.clientX}px`; this.voidCursor.style.top = `${event.clientY}px`; }
+        if(this.aimCursor) this.aimCursor.style.display = 'none';
         if(this.renderer && this.renderer.domElement) this.renderer.domElement.style.cursor = 'none';
+      } else {
+        // not over canvas or aiming disabled
+        if(this.aimCursor) this.aimCursor.style.display = 'none';
+        if(this.voidCursor) this.voidCursor.style.display = 'none';
+        if(this.renderer && this.renderer.domElement) this.renderer.domElement.style.cursor = '';
       }
   }
 
-  onKeyDown(event) { if(event.code === 'Space') this.shootMeteor(); }
+  onKeyDown(event) { if(event.code === 'KeyF') this.shootMeteor(); }
 
   shootMeteor() {
     const speedEl = document.getElementById('speed');
@@ -308,7 +321,14 @@ class App {
     const sizeEl = document.getElementById('meteorSize');
     const size = sizeEl ? parseFloat(sizeEl.value) : 0.5;
   // create a textured, irregular 3D meteor mesh sized according to `size` (meters)
-  const meteor = this.createMeteorMesh(size);
+  // Generate a high-quality per-meteor seed so subsequent random choices are unique
+  let seed = 0;
+  try{
+    const arr = new Uint32Array(1);
+    if(window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(arr);
+    seed = arr[0] || Math.floor(Math.random()*0xffffffff);
+  }catch(e){ seed = Math.floor(Math.random()*0xffffffff); }
+  const meteor = this.createMeteorMesh(size, seed);
   meteor.position.copy(this.camera.position);
     const dir = new THREE.Vector3().subVectors(this.cursor.position, this.camera.position).normalize();
     // If we have a predicted impact marker, aim directly at that point so meteors go toward the globe
@@ -320,6 +340,8 @@ class App {
     const mass = density * volume;
     const area = Math.PI * Math.pow(size/2,2);
   this.scene.add(meteor);
+  // Blur any focused element (like a clicked button) so the UI doesn't unexpectedly scroll
+  try{ if(document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur(); }catch(e){}
   const label = this.createLabel(`Meteor (${(size).toFixed(2)} m)`, meteor.position);
     const physVelocity = dir.clone().multiplyScalar(speed * this.SCENE_SCALE);
     // Convert meters -> scene units. Geometry radius is 1 (1 meter), so to represent
@@ -337,7 +359,8 @@ class App {
 
   // Create a textured meteor mesh as a smooth sphere and apply meteor_texture.jpg as its material map.
   // sizeMeters is diameter in meters.
-  createMeteorMesh(sizeMeters){
+  // seed is an optional 32-bit integer used to produce a unique random meteor
+  createMeteorMesh(sizeMeters, seed = null){
   // smooth sphere geometry for a ball-like meteor (increased resolution for crisper craters)
   const widthSeg = 96; // was 48
   const heightSeg = 64; // was 32
@@ -348,6 +371,20 @@ class App {
     const mesh = new THREE.Mesh(geom, mat);
 
     // try to load an external meteor texture image located at project root
+    // create a seeded RNG so each meteor is unique and reproducible per spawn
+    const makeRNG = (s) => {
+      let _s = s >>> 0;
+      if(!_s) _s = Math.floor(Math.random()*0xffffffff) >>> 0;
+      return () => {
+        // xorshift32
+        _s ^= (_s << 13);
+        _s ^= (_s >>> 17);
+        _s ^= (_s << 5);
+        return (_s >>> 0) / 0x100000000;
+      };
+    };
+    const rng = makeRNG(seed || (Math.floor(Math.random()*0xffffffff)>>>0));
+
     const loader = new THREE.TextureLoader();
     loader.load('meteor_texture.jpg', (tex)=>{
       try{
@@ -365,11 +402,15 @@ class App {
             const srcImg = ctx.getImageData(0,0,w,h);
 
             // crater sculpting parameters (unit-sphere space)
-            // For a more ball-like meteor we use gentle craters and much smaller silhouette displacement
-            const maxDepth = 0.06; // shallow inward domes so the sphere remains visibly round
-            const thresholdLow = 0.12; // slightly higher so only darker holes become craters
-            const thresholdHigh = 0.88; // darkness where crater is strongest
-            // choose a modest blur radius so craters are soft but not huge
+            // Choose a small base MaxDepth so craters are shallow dome-like penetrations.
+            // We pick a conservative default so domes only slightly indent the sphere.
+            const userMaxDepth = 2; // 0..10 user scale (2 -> subtle domes)
+            // map 0..10 -> 0..0.08 unit-sphere displacement (max ~0.08 is still small)
+            const maxDepth = (userMaxDepth / 10.0) * 0.08;
+            // thresholds for the blurred-darkness map: only fairly dark pixels become craters
+            const thresholdLow = 0.18;
+            const thresholdHigh = 0.85;
+            // small blur to preserve crater placement and avoid huge smear
             const blurRadiusPx = Math.max(1, Math.floor(Math.min(w,h) * 0.02));
 
             const posAttr = geom.attributes.position;
@@ -448,46 +489,57 @@ class App {
             };
 
             // Replace previous sponge-like FBM with ridged FBM for chunkier rock facets and fewer tiny pores
-            const fract = v => v - Math.floor(v);
-            const hash = x => fract(Math.sin(x) * 43758.5453123);
-            const noise3 = (x,y,z) => {
-              const s = x * 127.1 + y * 311.7 + z * 74.7;
-              return hash(s);
-            };
-            const smoothNoise = (x,y,z) => {
-              const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
-              const xf = x - xi, yf = y - yi, zf = z - zi;
-              let accum = 0;
-              for(let dx=0;dx<=1;dx++) for(let dy=0;dy<=1;dy++) for(let dz=0;dz<=1;dz++){
-                const hx = xi + dx, hy = yi + dy, hz = zi + dz;
-                const h = noise3(hx*1.0, hy*1.0, hz*1.0);
-                const wx = dx ? xf : 1 - xf;
-                const wy = dy ? yf : 1 - yf;
-                const wz = dz ? zf : 1 - zf;
-                accum += h * wx * wy * wz;
-              }
-              return accum;
-            };
             const fbm_ridged = (x,y,z,oct=4) => {
-              let sum = 0, amp = 0.5, freq = 1.0;
+              // use a cheap hash-based value noise with seeded RNG
+              const hash3 = (xi, yi, zi) => {
+                // combine coordinates with seed-derived jitter
+                const a = ((xi*374761393) ^ (yi*668265263) ^ (zi*2246822519)) >>> 0;
+                // xorshift-like mix
+                let v = (a + (seed>>>0)) >>> 0;
+                v ^= v << 13; v ^= v >>> 17; v ^= v << 5;
+                return (v >>> 0) / 0x100000000;
+              };
+              const valueNoise = (x,y,z) => {
+                const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+                const xf = x - xi, yf = y - yi, zf = z - zi;
+                // trilinear interpolation
+                const c000 = hash3(xi, yi, zi);
+                const c100 = hash3(xi+1, yi, zi);
+                const c010 = hash3(xi, yi+1, zi);
+                const c110 = hash3(xi+1, yi+1, zi);
+                const c001 = hash3(xi, yi, zi+1);
+                const c101 = hash3(xi+1, yi, zi+1);
+                const c011 = hash3(xi, yi+1, zi+1);
+                const c111 = hash3(xi+1, yi+1, zi+1);
+                const lerp = (a,b,t)=> a + (b-a)*t;
+                const ix00 = lerp(c000, c100, xf);
+                const ix10 = lerp(c010, c110, xf);
+                const ix01 = lerp(c001, c101, xf);
+                const ix11 = lerp(c011, c111, xf);
+                const iy0 = lerp(ix00, ix10, yf);
+                const iy1 = lerp(ix01, ix11, yf);
+                return lerp(iy0, iy1, zf);
+              };
+              let sum = 0, amp = 0.6, freq = 0.8;
               for(let i=0;i<oct;i++){
-                // ridged noise via abs and inversion
-                const n = 1.0 - Math.abs(smoothNoise(x*freq, y*freq, z*freq) * 2.0 - 1.0);
+                const n = 1.0 - Math.abs(valueNoise(x*freq, y*freq, z*freq) * 2.0 - 1.0);
                 sum += n * amp;
-                amp *= 0.5; freq *= 2.0;
+                amp *= 0.45; freq *= 2.0;
               }
               return sum;
             };
 
-            // tuned amplitudes for a rounder meteor: very small rock displacement and reduced pit amplification
-            const rockAmplitude = Math.min(0.04, maxDepth * 0.4);
-            const pitExtraDepth = Math.max(0.0, maxDepth * 0.25);
-            const lfScale = 1.2; // keep facets very low frequency
+            // tuned amplitudes for a rounder meteor: very small rock displacement and minimal pit amplification
+            // reduce rock amplitude so silhouette is smooth with coarse chunky facets (not spongey)
+            const rockAmplitude = Math.min(0.02, maxDepth * 0.6);
+            const pitExtraDepth = Math.max(0.0, maxDepth * 0.15);
+            const lfScale = 0.9 + rng() * 0.5; // keep lower-frequency variation
 
             // First: detect crater centers in image space by finding local maxima in the blurred height map
             const craterCenters = [];
-            const craterMaskThreshold = 0.18; // only consider reasonably dark regions
-            const minSeparationPx = Math.max(8, Math.floor(Math.min(w,h) * 0.03));
+            // be conservative: detect fewer, more meaningful crater centers that correspond to dark holes
+            const craterMaskThreshold = 0.35;
+            const minSeparationPx = Math.max(12, Math.floor(Math.min(w,h) * 0.07));
             for(let py=1; py<h-1; py++){
               for(let px=1; px<w-1; px++){
                 const idx = py*w + px;
@@ -501,16 +553,14 @@ class App {
                   if(!ok) continue;
                   // sample radius and darkness to determine crater category
                   const localDark = val;
-                  // randomized category based on darkness and some random jitter so multiple craters vary
-                  const rand = Math.random();
-                  // categories: big-deep, small-deep, big-shallow, small-shallow
+                  const rand = rng();
+                  // categories tuned toward fewer, smaller and shallower domes
                   let category = 0;
-                  if(localDark > 0.75){ category = rand < 0.5 ? 0 : 1; } else if(localDark > 0.5){ category = rand < 0.4 ? 1 : 3; } else { category = rand < 0.3 ? 2 : 3; }
-                  // base radius in pixels depending on category
-                  const catRadius = [ Math.max(10, Math.floor(Math.min(w,h)*0.10)), Math.max(6, Math.floor(Math.min(w,h)*0.06)), Math.max(12, Math.floor(Math.min(w,h)*0.12)), Math.max(4, Math.floor(Math.min(w,h)*0.04)) ];
-                  // depth multiplier per category (big-deep, small-deep, big-shallow, small-shallow)
-                  const catDepth = [ 1.0, 1.0, 0.45, 0.35 ];
-                  craterCenters.push({ x:px, y:py, radius: catRadius[category] * (0.8 + Math.random()*0.6), depthMult: catDepth[category] * (0.8 + Math.random()*0.6), darkness: localDark });
+                  if(localDark > 0.75){ category = rand < 0.45 ? 0 : 1; } else if(localDark > 0.5){ category = rand < 0.35 ? 1 : 3; } else { category = rand < 0.18 ? 2 : 3; }
+                  const catRadius = [ Math.max(8, Math.floor(Math.min(w,h)*0.07)), Math.max(6, Math.floor(Math.min(w,h)*0.045)), Math.max(10, Math.floor(Math.min(w,h)*0.09)), Math.max(4, Math.floor(Math.min(w,h)*0.035)) ];
+                  // shallower crater multipliers overall (domes only slightly indent)
+                  const catDepth = [ 0.35, 0.28, 0.2, 0.12 ];
+                  craterCenters.push({ x:px, y:py, radius: catRadius[category] * (0.85 + rng()*0.4), depthMult: catDepth[category] * (0.85 + rng()*0.35), darkness: localDark });
                 }
               }
             }
@@ -541,28 +591,46 @@ class App {
                 for(const c of craterCenters){ const dx = c.x - px, dy = c.y - py; const d2 = dx*dx + dy*dy; if(d2 < nd){ nd = d2; nearest = c; } }
                 if(nearest){
                   const dist = Math.sqrt(nd);
-                  const fall = Math.max(0, 1 - (dist / Math.max(1, nearest.radius)));
-                  // rim shaping: sharper at rim, smoother inside using a power curve
-                  const rim = Math.pow(fall, 0.6);
+                  // dome profile: smooth quadratic falloff for a bowl-like dome (gentle inside)
+                  const r = Math.max(1, nearest.radius);
+                  const ndorm = Math.max(0, 1 - (dist*dist) / (r*r));
+                  const dome = Math.pow(ndorm, 1.0);
                   // crater strength influenced by texture darkness at vertex too
                   const craterStrengthRaw = smoothstep(thresholdLow, thresholdHigh, hval);
-                  const baseCrater = rim * craterStrengthRaw;
-                  craterDisp = baseCrater * maxDepth * nearest.depthMult * Math.max(0.25, 1 - Math.abs(dir.y) * 0.2);
+                  craterDisp = dome * craterStrengthRaw * maxDepth * nearest.depthMult * Math.max(0.4, 1 - Math.abs(dir.y) * 0.12);
                 }
               } else {
                 const craterStrengthRaw = smoothstep(thresholdLow, thresholdHigh, hval);
                 craterDisp = craterStrengthRaw * maxDepth * Math.max(0.25, 1 - Math.abs(dir.y) * 0.25);
               }
 
-              // small extra deepening for very dark pixels, clamped
-              if(hval > 0.86) craterDisp += (hval - 0.86) / 0.14 * pitExtraDepth * 0.5;
-              craterDisp = Math.min(craterDisp, 0.32);
+              // small extra deepening for very dark pixels (kept tiny for domes)
+              if(hval > 0.9) craterDisp += (hval - 0.9) / 0.1 * pitExtraDepth * 0.5;
+              craterDisp = Math.min(craterDisp, maxDepth * 1.0);
 
               let finalRadius = 1.0 + rockDisp - craterDisp;
               finalRadius = Math.max(0.003, finalRadius);
               posAttr.setXYZ(i, dir.x * finalRadius, dir.y * finalRadius, dir.z * finalRadius);
             }
 
+            posAttr.needsUpdate = true;
+            geom.computeVertexNormals();
+
+            // Apply a very subtle elongation to approximate an American-football silhouette.
+            // Keep elongation extremely mild so meteors remain smooth and round.
+            const elongation = 1.0 + 0.03 * (rng() + rng()); // ~1.0..1.06
+            const ax = new THREE.Vector3(rng()*2-1, rng()*2-1, rng()*2-1).normalize();
+            for(let i=0;i<posAttr.count;i++){
+              const vx = posAttr.getX(i), vy = posAttr.getY(i), vz = posAttr.getZ(i);
+              const p = new THREE.Vector3(vx, vy, vz);
+              // project onto axis and scale component along axis
+              const proj = ax.clone().multiplyScalar(p.dot(ax) * (elongation - 1));
+              p.add(proj);
+              // normalize slightly to avoid extreme bulging, then reapply original length bias
+              const len = p.length();
+              const final = p.clone().multiplyScalar(1.0 / Math.max(1e-6, len));
+              posAttr.setXYZ(i, final.x * len, final.y * len, final.z * len);
+            }
             posAttr.needsUpdate = true;
             geom.computeVertexNormals();
 
@@ -610,8 +678,10 @@ class App {
               normalTex.needsUpdate = true;
               // assign both albedo and normal map to material
               mat.normalMap = normalTex;
-              // gentler normal influence for a smoother, more spherical look
-              mat.normalScale = new THREE.Vector2(0.08, 0.08);
+              // very gentle normal influence for subtle lighting from the shallow domes
+              mat.normalScale = new THREE.Vector2(0.045, 0.045);
+              // ensure slightly higher roughness for a rock-like look but not shiny
+              mat.roughness = 0.92; mat.metalness = 0.0;
             }catch(err){ console.warn('normal map bake failed', err); }
 
             return finalTex;
