@@ -241,10 +241,9 @@ class App {
     const speed = speedEl ? parseFloat(speedEl.value) : 0.05;
     const sizeEl = document.getElementById('meteorSize');
     const size = sizeEl ? parseFloat(sizeEl.value) : 0.5;
-    const meteorGeo = new THREE.SphereGeometry(1, 16, 16);
-    const meteorMat = new THREE.MeshStandardMaterial({ color:0x888888, metalness:0.2, roughness:0.5, transparent:true, opacity:1.0 });
-    const meteor = new THREE.Mesh(meteorGeo, meteorMat);
-    meteor.position.copy(this.camera.position);
+  // create a textured, irregular 3D meteor mesh sized according to `size` (meters)
+  const meteor = this.createMeteorMesh(size);
+  meteor.position.copy(this.camera.position);
     const dir = new THREE.Vector3().subVectors(this.cursor.position, this.camera.position).normalize();
     // If we have a predicted impact marker, aim directly at that point so meteors go toward the globe
     if(this.predictedImpactMarker && this.predictedImpactMarker.visible){
@@ -261,12 +260,239 @@ class App {
     // a meteor with diameter `size` (meters) we scale by radius = size/2 in meters.
     const meterToScene = 1 / this.SCENE_SCALE;
     const radiusScene = (size / 2) * meterToScene;
-    const visScale = Math.max(radiusScene, 1e-6); // avoid zero scale but keep real size
-    meteor.scale.setScalar(visScale);
+  // scale is handled inside createMeteorMesh; ensure minimal visibility if necessary
     // Give meteors a TTL and make their scene velocity slightly slower so they don't fly into space
     const sceneVelocity = dir.clone().multiplyScalar(speed * 0.6);
     meteor.material.transparent = true; meteor.material.opacity = 1.0;
-    this.meteors.push({ mesh:meteor, velocity:sceneVelocity, physVelocity, active:true, label, mass, area, size, ttl: 800, fading:false });
+    // give a small random angular velocity so meteors tumble in flight
+    const angVel = new THREE.Vector3((Math.random()-0.5)*2, (Math.random()-0.5)*2, (Math.random()-0.5)*2).multiplyScalar(0.6);
+    this.meteors.push({ mesh:meteor, velocity:sceneVelocity, physVelocity, active:true, label, mass, area, size, ttl: 800, fading:false, angularVelocity: angVel });
+  }
+
+  // Create a textured meteor mesh as a smooth sphere and apply meteor_texture.jpg as its material map.
+  // sizeMeters is diameter in meters.
+  createMeteorMesh(sizeMeters){
+  // smooth sphere geometry for a ball-like meteor (increased resolution for crisper craters)
+  const widthSeg = 96; // was 48
+  const heightSeg = 64; // was 32
+  const geom = new THREE.SphereGeometry(1, widthSeg, heightSeg);
+
+    // create a PBR-friendly material; we'll set the map when the texture loads
+    const mat = new THREE.MeshStandardMaterial({ color:0xffffff, roughness:0.9, metalness:0.02, transparent:true });
+    const mesh = new THREE.Mesh(geom, mat);
+
+    // try to load an external meteor texture image located at project root
+    const loader = new THREE.TextureLoader();
+    loader.load('meteor_texture.jpg', (tex)=>{
+      try{
+        const img = tex.image;
+        // helper to apply crater-like inward domes by sampling the image at each vertex UV
+        // and bake a normal map from the processed brightness map for better lighting
+        const applyCratersFromImage = (image)=>{
+          try{
+            const w = image.width, h = image.height;
+            const cvs = document.createElement('canvas'); cvs.width = w; cvs.height = h;
+            const ctx = cvs.getContext('2d');
+            ctx.drawImage(image, 0, 0, w, h);
+            // lightly darken for visual consistency
+            ctx.fillStyle = 'rgba(0,0,0,0.06)'; ctx.fillRect(0,0,w,h);
+            const srcImg = ctx.getImageData(0,0,w,h);
+
+            // crater sculpting parameters (unit-sphere space)
+            // user requested deeper craters here
+            const maxDepth = 0.09; // increased depth for more pronounced, but still controlled, inward domes
+            const thresholdLow = 0.20; // darkness threshold where crater starts
+            const thresholdHigh = 0.75; // darkness where crater is strongest
+            const blurRadiusPx = Math.max(2, Math.floor(Math.min(w,h) * 0.02)); // slightly larger blur for smoother domes
+
+            const posAttr = geom.attributes.position;
+            const uvAttr = geom.attributes.uv;
+            if(!uvAttr) return null;
+
+            // smoothstep helper
+            const smoothstep = (edge0, edge1, x) => {
+              const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+              return t * t * (3 - 2 * t);
+            };
+
+            // build a blurred height map (brightness -> height) using a box blur; height = darkness
+            const height = new Float32Array(w*h);
+            const r = blurRadiusPx;
+            for(let py=0; py<h; py++){
+              for(let px=0; px<w; px++){
+                let sum = 0, count = 0;
+                for(let oy=-r; oy<=r; oy++){
+                  const sy = Math.min(h-1, Math.max(0, py + oy));
+                  for(let ox=-r; ox<=r; ox++){
+                    const sx = Math.min(w-1, Math.max(0, px + ox));
+                    const idx = (sy * w + sx) * 4;
+                    const rr = srcImg.data[idx], gg = srcImg.data[idx+1], bb = srcImg.data[idx+2];
+                    sum += (rr + gg + bb) / 3;
+                    count++;
+                  }
+                }
+                const avg = (sum / count) / 255.0;
+                height[py*w + px] = 1.0 - avg; // darkness as height (0..1)
+              }
+            }
+
+            // use the height map to displace vertices inward by a smooth dome amount
+            for(let i=0;i<posAttr.count;i++){
+              const u = uvAttr.getX(i);
+              const v = uvAttr.getY(i);
+              // nearest pixel sample from blurred height
+              const cx = Math.floor(u * (w - 1));
+              const cy = Math.floor((1 - v) * (h - 1));
+              const hval = height[cy * w + cx] || 0;
+              // crater strength derived from height with smoothstep thresholding
+              const craterStrength = smoothstep(thresholdLow, thresholdHigh, hval);
+              if(craterStrength <= 0) continue;
+
+              // get current vertex and normal (on unit sphere approximation)
+              const x = posAttr.getX(i), y = posAttr.getY(i), z = posAttr.getZ(i);
+              const norm = new THREE.Vector3(x, y, z).normalize();
+
+              // displace only inward (toward center) scaled by craterStrength
+              const disp = craterStrength * maxDepth;
+              const newPos = norm.clone().multiplyScalar(1 - disp);
+              posAttr.setXYZ(i, newPos.x, newPos.y, newPos.z);
+            }
+
+            posAttr.needsUpdate = true;
+            geom.computeVertexNormals();
+
+            // produce final canvas texture (we reuse the canvas we drew into earlier)
+            const finalTex = new THREE.CanvasTexture(cvs);
+            finalTex.encoding = THREE.sRGBEncoding;
+            finalTex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+            finalTex.wrapS = finalTex.wrapT = THREE.RepeatWrapping;
+            finalTex.repeat.set(1,1);
+
+            // Bake a normal map from the blurred height map for improved lighting (linear encoding)
+            try{
+              const nCvs = document.createElement('canvas'); nCvs.width = w; nCvs.height = h;
+              const nCtx = nCvs.getContext('2d');
+              const nImg = nCtx.createImageData(w,h);
+              // strength factor controls how pronounced the normals appear
+              const strength = Math.max(0.8, maxDepth * 24.0);
+              for(let py=0; py<h; py++){
+                for(let px=0; px<w; px++){
+                  const idx = py*w + px;
+                  const hl = height[py*w + Math.max(0, px-1)];
+                  const hr = height[py*w + Math.min(w-1, px+1)];
+                  const hu = height[Math.max(0, py-1)*w + px];
+                  const hd = height[Math.min(h-1, py+1)*w + px];
+                  const dx = (hr - hl) * strength;
+                  const dy = (hd - hu) * strength;
+                  // normal in tangent-space
+                  let nx = -dx, ny = -dy, nz = 1.0;
+                  const len = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1.0;
+                  nx /= len; ny /= len; nz /= len;
+                  // encode to RGB [0..255]
+                  const off = idx * 4;
+                  nImg.data[off]   = Math.floor((nx * 0.5 + 0.5) * 255);
+                  nImg.data[off+1] = Math.floor((ny * 0.5 + 0.5) * 255);
+                  nImg.data[off+2] = Math.floor((nz * 0.5 + 0.5) * 255);
+                  nImg.data[off+3] = 255;
+                }
+              }
+              nCtx.putImageData(nImg, 0, 0);
+              const normalTex = new THREE.CanvasTexture(nCvs);
+              normalTex.encoding = THREE.LinearEncoding;
+              normalTex.wrapS = normalTex.wrapT = THREE.RepeatWrapping;
+              normalTex.needsUpdate = true;
+              // assign both albedo and normal map to material
+              mat.normalMap = normalTex;
+              // user requested less aggressive normal strength
+              mat.normalScale = new THREE.Vector2(0.25, 0.25);
+            }catch(err){ console.warn('normal map bake failed', err); }
+
+            return finalTex;
+          }catch(err){ console.warn('applyCratersFromImage failed', err); return null; }
+        };
+
+        if(img && img.width && img.height){
+          // create a darker, crater-sculpted texture and assign it
+          const craterTex = applyCratersFromImage(img);
+          if(craterTex){ mat.map = craterTex; }
+          else { tex.encoding = THREE.sRGBEncoding; tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy(); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(1,1); mat.map = tex; }
+        } else {
+          tex.encoding = THREE.sRGBEncoding; tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy(); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(1,1); mat.map = tex;
+        }
+        mat.needsUpdate = true;
+      }catch(e){
+        console.warn('meteor texture assignment failed', e);
+      }
+    }, undefined, ()=>{
+      // fallback to procedural texture if load fails
+      const ctex = this.createProceduralMeteorTexture();
+      mat.map = ctex; mat.needsUpdate = true;
+    });
+
+  // Map meteor diameter (meters) to a visual radius using a wide dynamic-range mapping
+  // Endpoints: 0.1 m -> Andorra (very small), 25 m -> Montenegro (medium), 50 m -> Slovenia (large)
+  const MIN_MET = 0.1, MAX_MET = 50.0;
+  // Representative country areas (km^2) for visual anchors
+  const AREA_ANDORRA = 468;    // Andorra ~468 km^2 (tiny)
+  const AREA_MONTENEGRO = 13812; // Montenegro ~13.8k km^2 (medium)
+  const AREA_SLOVENIA = 20273; // Slovenia ~20.3k km^2 (large)
+  const radiusAndorra = Math.sqrt(AREA_ANDORRA / Math.PI) / 1000.0;
+  const radiusMontenegro = Math.sqrt(AREA_MONTENEGRO / Math.PI) / 1000.0;
+  const radiusSlovenia = Math.sqrt(AREA_SLOVENIA / Math.PI) / 1000.0;
+  // normalize input size (0..1)
+  const tRaw = (sizeMeters - MIN_MET) / (MAX_MET - MIN_MET);
+  const t = Math.max(0, Math.min(1, tRaw));
+  // bias growth so mid values map near Montenegro and larger values approach Slovenia
+  const gamma = 1.6;
+  const tAdj = Math.pow(t, gamma);
+  // interpolate between Andorra and Slovenia (Montenegro sits mid-range)
+  const visualRadiusBase = radiusAndorra + (radiusSlovenia - radiusAndorra) * tAdj;
+  // optional visual amplifier, smaller now that endpoints are closer
+  const VISUAL_AMPLIFIER = 1.2;
+  const visualRadius = visualRadiusBase * VISUAL_AMPLIFIER;
+  // clamp and set meteor scale (scene units)
+  mesh.scale.setScalar(Math.max(visualRadius, 0.005));
+
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    return mesh;
+  }
+
+  // Generate a simple procedural meteor texture as a CanvasTexture fallback
+  createProceduralMeteorTexture(){
+    const size = 512;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    // base color
+    ctx.fillStyle = '#9a8f85'; ctx.fillRect(0,0,size,size);
+    // noisy overlay
+    const image = ctx.getImageData(0,0,size,size);
+    for(let y=0;y<size;y++){
+      for(let x=0;x<size;x++){
+        const i = (y*size + x) * 4;
+        const n = Math.floor(40 * Math.random()) - 20;
+        image.data[i] = Math.max(0, Math.min(255, image.data[i] + n));
+        image.data[i+1] = Math.max(0, Math.min(255, image.data[i+1] + n));
+        image.data[i+2] = Math.max(0, Math.min(255, image.data[i+2] + n));
+        image.data[i+3] = 255;
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+    // draw some darker circular 'craters'
+    for(let i=0;i<120;i++){
+      const rx = Math.random()*size, ry = Math.random()*size, r = (2 + Math.random()*18);
+      const grad = ctx.createRadialGradient(rx, ry, 0, rx, ry, r);
+      const alpha = 0.15 + Math.random()*0.45;
+      grad.addColorStop(0, `rgba(30,20,10,${alpha})`);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(rx, ry, r, 0, Math.PI*2); ctx.fill();
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.encoding = THREE.sRGBEncoding;
+    tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    return tex;
   }
 
   resetScene() {
@@ -313,6 +539,19 @@ class App {
       if(!meteor.active) return;
       const pos = meteor.mesh.position;
       const r = pos.length();
+      // apply angular velocity (tumble) if present
+      if(meteor.angularVelocity && meteor.mesh){
+        // convert angular velocity vector (radians/sec) into a small rotation quaternion
+        const av = meteor.angularVelocity.clone().multiplyScalar(dt);
+        const ax = av.length();
+        if(ax > 0){
+          const q = new THREE.Quaternion();
+          q.setFromAxisAngle(av.normalize(), ax);
+          meteor.mesh.quaternion.premultiply(q);
+          // slight damping so the tumble slows over time
+          meteor.angularVelocity.multiplyScalar(0.998);
+        }
+      }
       if(this.realistic){
         // keep original complex integration: for brevity we fallback to simple motion here
         const posMeters = pos.clone().multiplyScalar(this.SCENE_SCALE);
@@ -487,23 +726,22 @@ class App {
   // (1 scene unit == 1000 km because SCENE_SCALE = 1e6 m / scene unit).
   const MIN_MET = 0.1; // meters slider min
   const MAX_MET = 50.0; // meters slider max
-  // Representative country areas (km^2)
-  const AREA_IRELAND = 84421; // km^2 (island of Ireland ~84k km^2)
-  const AREA_POLAND = 312679; // km^2
-  const AREA_ALGERIA = 2381741; // km^2
-  // convert area -> radius (km) -> scene units (km -> scene units = km / 1000)
-  const radiusIreland = Math.sqrt(AREA_IRELAND / Math.PI) / 1000.0; // scene units
-  const radiusPoland  = Math.sqrt(AREA_POLAND  / Math.PI) / 1000.0;
-  const radiusAlgeria = Math.sqrt(AREA_ALGERIA / Math.PI) / 1000.0;
+  // Representative country areas (km^2) for visual anchors: Andorra (tiny) -> Montenegro (mid) -> Slovenia (larger)
+  const AREA_ANDORRA = 468; // km^2
+  const AREA_MONTENEGRO = 13812; // km^2
+  const AREA_SLOVENIA = 20273; // km^2
+  const radiusAndorra = Math.sqrt(AREA_ANDORRA / Math.PI) / 1000.0;
+  const radiusMontenegro = Math.sqrt(AREA_MONTENEGRO / Math.PI) / 1000.0;
+  const radiusSlovenia = Math.sqrt(AREA_SLOVENIA / Math.PI) / 1000.0;
 
   // normalize input size (0..1)
   const tRaw = (sizeMeters - MIN_MET) / (MAX_MET - MIN_MET);
   const t = Math.max(0, Math.min(1, tRaw));
-  // use a power curve to bias mid-range values toward the Poland-sized target
-  const gamma = 2.2; // tuned so ~25m maps near Poland radius
+  // bias toward Montenegro for mid values
+  const gamma = 2.0; // tuned so ~25m maps near Montenegro radius
   const tAdj = Math.pow(t, gamma);
-  // interpolate between Ireland and Algeria radii
-  const visualBase = radiusIreland + (radiusAlgeria - radiusIreland) * tAdj;
+  // interpolate between Andorra and Slovenia radii
+  const visualBase = radiusAndorra + (radiusSlovenia - radiusAndorra) * tAdj;
 
     // Create ring geometry sized relative to visualBase
   const ringInner = visualBase * 0.30;
