@@ -299,11 +299,12 @@ class App {
             const srcImg = ctx.getImageData(0,0,w,h);
 
             // crater sculpting parameters (unit-sphere space)
-            // user requested deeper craters here
-            const maxDepth = 0.09; // increased depth for more pronounced, but still controlled, inward domes
-            const thresholdLow = 0.20; // darkness threshold where crater starts
-            const thresholdHigh = 0.75; // darkness where crater is strongest
-            const blurRadiusPx = Math.max(2, Math.floor(Math.min(w,h) * 0.02)); // slightly larger blur for smoother domes
+            // Aggressive pithole-style craters requested: increase depth significantly but clamp to avoid geometry inversion
+            const maxDepth = 0.42; // much deeper inward domes (pithole-like)
+            const thresholdLow = 0.08; // catch subtle holes
+            const thresholdHigh = 0.9; // darkness where crater is strongest
+            // choose blur radius as a fraction of image size; larger radius for softer edges around very deep pits
+            const blurRadiusPx = Math.max(2, Math.floor(Math.min(w,h) * 0.05)); // stronger blur for very soft edges
 
             const posAttr = geom.attributes.position;
             const uvAttr = geom.attributes.uv;
@@ -315,46 +316,86 @@ class App {
               return t * t * (3 - 2 * t);
             };
 
-            // build a blurred height map (brightness -> height) using a box blur; height = darkness
-            const height = new Float32Array(w*h);
-            const r = blurRadiusPx;
+            // build a blurred height map (brightness -> height) using a separable Gaussian blur for smoothness
+            const raw = new Float32Array(w*h);
             for(let py=0; py<h; py++){
               for(let px=0; px<w; px++){
-                let sum = 0, count = 0;
-                for(let oy=-r; oy<=r; oy++){
-                  const sy = Math.min(h-1, Math.max(0, py + oy));
-                  for(let ox=-r; ox<=r; ox++){
-                    const sx = Math.min(w-1, Math.max(0, px + ox));
-                    const idx = (sy * w + sx) * 4;
-                    const rr = srcImg.data[idx], gg = srcImg.data[idx+1], bb = srcImg.data[idx+2];
-                    sum += (rr + gg + bb) / 3;
-                    count++;
-                  }
+                const idx = (py * w + px) * 4;
+                const rr = srcImg.data[idx], gg = srcImg.data[idx+1], bb = srcImg.data[idx+2];
+                const lum = (rr + gg + bb) / (3 * 255);
+                raw[py*w + px] = 1.0 - lum; // darkness as unblurred height
+              }
+            }
+
+            // create Gaussian kernel (1D) for separable blur
+            const gauss = (sigma, x) => Math.exp(-(x*x)/(2*sigma*sigma));
+            const sigma = Math.max(1.0, blurRadiusPx * 0.5);
+            const kr = Math.ceil(sigma * 3.0);
+            const kernel = new Float32Array(kr*2 + 1);
+            let ksum = 0;
+            for(let i=-kr;i<=kr;i++){ const v = gauss(sigma, i); kernel[i+kr] = v; ksum += v; }
+            for(let i=0;i<kernel.length;i++) kernel[i] /= ksum;
+
+            // horizontal blur
+            const tmp = new Float32Array(w*h);
+            for(let y=0;y<h;y++){
+              for(let x=0;x<w;x++){
+                let s = 0;
+                for(let k=-kr;k<=kr;k++){
+                  const sx = Math.min(w-1, Math.max(0, x+k));
+                  s += raw[y*w + sx] * kernel[k+kr];
                 }
-                const avg = (sum / count) / 255.0;
-                height[py*w + px] = 1.0 - avg; // darkness as height (0..1)
+                tmp[y*w + x] = s;
+              }
+            }
+            // vertical blur (write into final height)
+            const height = new Float32Array(w*h);
+            for(let x=0;x<w;x++){
+              for(let y=0;y<h;y++){
+                let s = 0;
+                for(let k=-kr;k<=kr;k++){
+                  const sy = Math.min(h-1, Math.max(0, y+k));
+                  s += tmp[sy*w + x] * kernel[k+kr];
+                }
+                height[y*w + x] = s;
               }
             }
 
             // use the height map to displace vertices inward by a smooth dome amount
+            // We'll bilinear sample the height map for smoother results
+            const sampleHeight = (u, v) => {
+              const fx = u * (w - 1);
+              const fy = (1 - v) * (h - 1);
+              const x0 = Math.floor(fx);
+              const y0 = Math.floor(fy);
+              const x1 = Math.min(w-1, x0+1);
+              const y1 = Math.min(h-1, y0+1);
+              const sx = fx - x0;
+              const sy = fy - y0;
+              const a = height[y0*w + x0];
+              const b = height[y0*w + x1];
+              const c = height[y1*w + x0];
+              const d = height[y1*w + x1];
+              const res = a * (1-sx) * (1-sy) + b * sx * (1-sy) + c * (1-sx) * sy + d * sx * sy;
+              return res;
+            };
+
             for(let i=0;i<posAttr.count;i++){
               const u = uvAttr.getX(i);
               const v = uvAttr.getY(i);
-              // nearest pixel sample from blurred height
-              const cx = Math.floor(u * (w - 1));
-              const cy = Math.floor((1 - v) * (h - 1));
-              const hval = height[cy * w + cx] || 0;
-              // crater strength derived from height with smoothstep thresholding
-              const craterStrength = smoothstep(thresholdLow, thresholdHigh, hval);
-              if(craterStrength <= 0) continue;
-
-              // get current vertex and normal (on unit sphere approximation)
+              const hval = sampleHeight(u, v) || 0;
+              // amplify crater effect non-linearly for punchier pits
+              const craterStrengthRaw = smoothstep(thresholdLow, thresholdHigh, hval);
+              const craterStrength = Math.pow(craterStrengthRaw, 1.5) * 1.6; // amplify and bias toward stronger excavation
+              if(craterStrength <= 0.001) continue;
               const x = posAttr.getX(i), y = posAttr.getY(i), z = posAttr.getZ(i);
               const norm = new THREE.Vector3(x, y, z).normalize();
-
-              // displace only inward (toward center) scaled by craterStrength
-              const disp = craterStrength * maxDepth;
-              const newPos = norm.clone().multiplyScalar(1 - disp);
+              // taper displacement near poles/edges to avoid pinching using normal's y component
+              const edgeFade = Math.max(0.02, 1.0 - Math.abs(norm.y) * 0.5);
+              let disp = craterStrength * maxDepth * edgeFade;
+              // safety clamp: don't push vertex past 60% of the radius to avoid inversion
+              disp = Math.min(disp, 0.6);
+              const newPos = norm.clone().multiplyScalar(Math.max(0.001, 1 - disp));
               posAttr.setXYZ(i, newPos.x, newPos.y, newPos.z);
             }
 
@@ -373,8 +414,9 @@ class App {
               const nCvs = document.createElement('canvas'); nCvs.width = w; nCvs.height = h;
               const nCtx = nCvs.getContext('2d');
               const nImg = nCtx.createImageData(w,h);
-              // strength factor controls how pronounced the normals appear
-              const strength = Math.max(0.8, maxDepth * 24.0);
+              // strength factor controls how pronounced the normals appear; reduce slightly but keep visible
+              // increase normal strength to accentuate deep pitholes shading while keeping it stable
+              const strength = Math.max(3.0, maxDepth * 36.0);
               for(let py=0; py<h; py++){
                 for(let px=0; px<w; px++){
                   const idx = py*w + px;
@@ -400,11 +442,13 @@ class App {
               const normalTex = new THREE.CanvasTexture(nCvs);
               normalTex.encoding = THREE.LinearEncoding;
               normalTex.wrapS = normalTex.wrapT = THREE.RepeatWrapping;
+              normalTex.minFilter = THREE.LinearMipmapLinearFilter;
+              normalTex.generateMipmaps = true;
               normalTex.needsUpdate = true;
               // assign both albedo and normal map to material
               mat.normalMap = normalTex;
-              // user requested less aggressive normal strength
-              mat.normalScale = new THREE.Vector2(0.25, 0.25);
+              // user requested less aggressive normal strength but crisper lighting still
+              mat.normalScale = new THREE.Vector2(0.18, 0.18);
             }catch(err){ console.warn('normal map bake failed', err); }
 
             return finalTex;
@@ -414,10 +458,14 @@ class App {
         if(img && img.width && img.height){
           // create a darker, crater-sculpted texture and assign it
           const craterTex = applyCratersFromImage(img);
-          if(craterTex){ mat.map = craterTex; }
-          else { tex.encoding = THREE.sRGBEncoding; tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy(); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(1,1); mat.map = tex; }
+          if(craterTex){ 
+            craterTex.minFilter = THREE.LinearMipmapLinearFilter; craterTex.generateMipmaps = true; craterTex.needsUpdate = true;
+            mat.map = craterTex; 
+          } else {
+            tex.encoding = THREE.sRGBEncoding; tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy(); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.generateMipmaps = true; tex.repeat.set(1,1); mat.map = tex; 
+          }
         } else {
-          tex.encoding = THREE.sRGBEncoding; tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy(); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(1,1); mat.map = tex;
+          tex.encoding = THREE.sRGBEncoding; tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy(); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.generateMipmaps = true; tex.repeat.set(1,1); mat.map = tex;
         }
         mat.needsUpdate = true;
       }catch(e){
@@ -460,7 +508,7 @@ class App {
 
   // Generate a simple procedural meteor texture as a CanvasTexture fallback
   createProceduralMeteorTexture(){
-    const size = 512;
+      const size = 1024; // increase procedural fallback resolution for sharper details
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = size;
     const ctx = canvas.getContext('2d');
@@ -488,11 +536,14 @@ class App {
       grad.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(rx, ry, r, 0, Math.PI*2); ctx.fill();
     }
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.encoding = THREE.sRGBEncoding;
-    tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    return tex;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.encoding = THREE.sRGBEncoding;
+  tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
   }
 
   resetScene() {
