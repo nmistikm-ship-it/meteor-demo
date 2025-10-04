@@ -330,8 +330,22 @@ class App {
       }
     });
 
-    // impact effects
-    this.impactEffects.forEach(effect=>{ effect.mesh.scale.addScalar(0.05*this.simSpeed); effect.mesh.material.opacity -= 0.02*this.simSpeed; if(effect.mesh.material.opacity <= 0) this.scene.remove(effect.mesh); });
+    // impact effects: expand, fade and spin each ring around its local tangent axis
+    this.impactEffects.forEach(effect=>{
+      // grow and fade
+      effect.mesh.scale.addScalar(0.05*this.simSpeed);
+      effect.mesh.material.opacity -= 0.02*this.simSpeed;
+
+      // rotate the ring around the stored axis (world-space normal at impact)
+      if(effect.axis && typeof effect.spin === 'number'){
+        // rotate around the world-space normal so the ring spins in-plane of the surface
+        effect.mesh.rotateOnWorldAxis(effect.axis, effect.spin * this.simSpeed);
+      }
+
+      if(effect.mesh.material.opacity <= 0){
+        if(effect.mesh.parent) effect.mesh.parent.remove(effect.mesh);
+      }
+    });
     this.impactEffects = this.impactEffects.filter(e=>e.mesh.material.opacity>0);
 
     this.meteors = this.meteors.filter(m=>m.active);
@@ -363,16 +377,30 @@ class App {
   }
 
   createImpact(position){
+    // make a larger, more visible impact ring
     const normal = position.clone().normalize();
-    const geo = new THREE.RingGeometry(0.1,0.2,32);
-    const mat = new THREE.MeshBasicMaterial({ color:0xff0000, side:THREE.DoubleSide, transparent:true, opacity:0.8 });
+    // wider ring for visibility
+    const geo = new THREE.RingGeometry(0.25, 0.6, 64);
+    const mat = new THREE.MeshBasicMaterial({ color:0xff3300, side:THREE.DoubleSide, transparent:true, opacity:0.9, depthWrite: false });
     const ring = new THREE.Mesh(geo, mat);
-    const quat = new THREE.Quaternion();
-    quat.setFromUnitVectors(new THREE.Vector3(0,1,0), normal);
+
+    // orient ring so its plane is tangent to the sphere at the impact point
+    const up = new THREE.Vector3(0,1,0);
+    const quat = new THREE.Quaternion().setFromUnitVectors(up, normal);
     ring.quaternion.copy(quat);
-    ring.position.copy(normal.multiplyScalar(this.earthRadius+0.01));
+
+    // small offset so ring sits just above the surface
+    ring.position.copy(normal.clone().multiplyScalar(this.earthRadius + 0.005));
+
+    // apply a random in-plane rotation so rings don't all look identical
+    const inPlaneAngle = Math.random() * Math.PI * 2;
+    ring.rotateOnWorldAxis(normal, inPlaneAngle);
+
     this.scene.add(ring);
-    this.impactEffects.push({ mesh:ring });
+
+    // store per-effect spin axis (world-space normal) and a small randomized spin speed
+    const spin = (0.02 + Math.random() * 0.06) * (Math.random() < 0.5 ? 1 : -1);
+    this.impactEffects.push({ mesh: ring, axis: normal.clone(), spin });
   }
 
   // NASA fetchers kept as-is but bound to this
