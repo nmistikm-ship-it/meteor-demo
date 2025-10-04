@@ -91,13 +91,46 @@ class App {
   this.renderer.toneMappingExposure = 1.0;
     document.body.appendChild(this.renderer.domElement);
 
+    // create an HTML overlay for the aim cursor (dot / crosshair)
+    const aimEl = document.createElement('div');
+    aimEl.id = 'aimCursor';
+    Object.assign(aimEl.style, {
+      position: 'fixed',
+      left: '0px',
+      top: '0px',
+      width: '18px',
+      height: '18px',
+      transform: 'translate(-50%, -50%)',
+      borderRadius: '50%',
+      background: 'rgba(255,170,0,0.7)',
+      pointerEvents: 'none',
+      display: 'none',
+      zIndex: 2000
+    });
+    document.body.appendChild(aimEl);
+    this.aimCursor = aimEl;
+    this._pointerOverCanvas = false; // track if the mouse is currently over the renderer canvas
+
+    // show/hide aim when pointer enters/leaves the canvas
+    this.renderer.domElement.addEventListener('mouseenter', () => {
+      this._pointerOverCanvas = true;
+      if(this.showAiming){ this.aimCursor.style.display = 'block'; this.renderer.domElement.style.cursor = 'none'; }
+    });
+    this.renderer.domElement.addEventListener('mouseleave', () => {
+      this._pointerOverCanvas = false;
+      this.aimCursor.style.display = 'none';
+      this.renderer.domElement.style.cursor = '';
+    });
+
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
 
     // Earth
     const earthGeo = new THREE.SphereGeometry(this.earthRadius, 32, 32);
     const earthMat = new THREE.MeshPhongMaterial({ color: 0x2233ff });
-    const earth = new THREE.Mesh(earthGeo, earthMat);
-    this.scene.add(earth);
+      const earth = new THREE.Mesh(earthGeo, earthMat);
+      this.scene.add(earth);
+      // keep a direct reference to the Earth mesh so we can test ray intersections
+      this.earth = earth;
     this.createLabel('Earth', new THREE.Vector3(0, this.earthRadius + 0.2, 0));
 
   // Lighting: ambient + hemisphere + directional (sun) — but we do not add a visible Sun mesh
@@ -114,21 +147,12 @@ class App {
   cameraLight.name = 'cameraLight';
   this.camera.add(cameraLight);
 
-    // cursor group
-    this.cursor = new THREE.Group();
-    const ringGeo = new THREE.RingGeometry(0.05, 0.08, 32);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffff00, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.rotation.x = Math.PI / 2;
-    ring.name = 'cursorRing';
-    this.cursor.add(ring);
-    const lineMat = new THREE.LineBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.9 });
-    const crossSize = 0.06;
-    const crossXGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-crossSize, 0, 0), new THREE.Vector3(crossSize, 0, 0)]);
-    const crossYGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -crossSize, 0), new THREE.Vector3(0, crossSize, 0)]);
-    this.cursor.add(new THREE.Line(crossXGeo, lineMat));
-    this.cursor.add(new THREE.Line(crossYGeo, lineMat));
-    this.scene.add(this.cursor);
+  // cursor placeholder (invisible) — HTML overlay replaces the on-screen pointer
+  // We keep a minimal Object3D so existing code that reads/writes this.cursor.position
+  // and uses it for aiming/prediction continues to work, but we do NOT add any
+  // visible geometry to the scene.
+  this.cursor = new THREE.Object3D();
+  // intentionally do NOT add to scene: avoid the residual 3D cursor geometry
 
     // aiming line
     const aimMat = new THREE.LineBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.6 });
@@ -144,12 +168,7 @@ class App {
     this.predictedImpactMarker.visible = false;
     this.scene.add(this.predictedImpactMarker);
 
-    // mouse-follow cursor
-    const mcGeo = new THREE.SphereGeometry(0.03, 8, 8);
-    const mcMat = new THREE.MeshBasicMaterial({ color: 0xffff66 });
-    const mouseCursor = new THREE.Mesh(mcGeo, mcMat);
-    mouseCursor.name = 'mouseCursor';
-    this.scene.add(mouseCursor);
+  // mouse-follow cursor (removed; replaced by HTML overlay aimCursor)
 
     // events
     window.addEventListener('resize', () => this.onWindowResize());
@@ -162,7 +181,16 @@ class App {
     if (el('speed')) { const s = el('speed'); if (el('speedVal')) el('speedVal').innerText = s.value; s.oninput = (e) => { if (el('speedVal')) el('speedVal').innerText = parseFloat(e.target.value).toFixed(2); }; }
     if (el('reset')) el('reset').onclick = () => this.resetScene();
     if (el('pause')) el('pause').onclick = (e) => { this.paused = !this.paused; e.target.innerText = this.paused ? 'Resume' : 'Pause'; };
-    if (el('toggleAiming')) el('toggleAiming').onclick = (e) => { this.showAiming = !this.showAiming; e.target.innerText = this.showAiming ? 'Hide Aiming' : 'Show Aiming'; const aim = this.scene.getObjectByName('aimingLine'); if (aim) aim.visible = this.showAiming; };
+    if (el('toggleAiming')) el('toggleAiming').onclick = (e) => {
+      this.showAiming = !this.showAiming;
+      e.target.innerText = this.showAiming ? 'Hide Aiming' : 'Show Aiming';
+      const aim = this.scene.getObjectByName('aimingLine'); if (aim) aim.visible = this.showAiming;
+      // update HTML overlay and native cursor only when pointer is over canvas
+      if(this._pointerOverCanvas){
+        if(this.showAiming){ this.aimCursor.style.display = 'block'; this.renderer.domElement.style.cursor = 'none'; }
+        else { this.aimCursor.style.display = 'none'; this.renderer.domElement.style.cursor = ''; }
+      }
+    };
   if (el('fire')) el('fire').onclick = () => this.shootMeteor();
   // wire meteor size UI
   const ms = el('meteorSize'); if(ms){ const mv = el('meteorSizeVal'); mv.innerText = ms.value; ms.oninput = (e)=>{ if(mv) mv.innerText = parseFloat(e.target.value).toFixed(1); }; }
@@ -171,6 +199,13 @@ class App {
     const uploadInput = el('uploadTex');
     if (uploadInput) uploadInput.addEventListener('change', (ev) => this.onUploadTexture(ev));
     const realBtn = el('toggleRealism'); if(realBtn) realBtn.onclick = (e)=>{ this.realistic = !this.realistic; e.target.innerText = this.realistic? 'Disable Realistic Physics' : 'Enable Realistic Physics'; };
+
+    // ensure when hovering UI we show default cursor and hide the aim overlay
+    const uiRoot = document.getElementById('ui');
+    if(uiRoot){
+      uiRoot.addEventListener('mouseenter', ()=>{ this.aimCursor.style.display = 'none'; if(this.renderer && this.renderer.domElement) this.renderer.domElement.style.cursor = ''; });
+      uiRoot.addEventListener('mouseleave', ()=>{ if(this._pointerOverCanvas && this.showAiming){ this.aimCursor.style.display = 'block'; this.renderer.domElement.style.cursor = 'none'; } });
+    }
 
     // initial aiming visibility
     const aimObj = this.scene.getObjectByName('aimingLine'); if (aimObj) aimObj.visible = this.showAiming;
@@ -225,15 +260,44 @@ class App {
     this.mouse.x = (event.clientX/window.innerWidth)*2-1;
     this.mouse.y = -(event.clientY/window.innerHeight)*2+1;
     this.raycaster.setFromCamera(this.mouse, this.camera);
-    const planeZ = new THREE.Plane(new THREE.Vector3(0,0,-1).applyQuaternion(this.camera.quaternion), -5);
-    const intersection = new THREE.Vector3();
-    this.raycaster.ray.intersectPlane(planeZ, intersection);
-    if(this.cursor) {
-      this.cursor.position.copy(intersection);
-      this.cursor.lookAt(this.camera.position);
-      const ringMesh = this.cursor.getObjectByName('cursorRing');
-      if(ringMesh) ringMesh.rotation.copy(new THREE.Euler(Math.PI/2,0,0));
-    }
+      const planeZ = new THREE.Plane(new THREE.Vector3(0,0,-1).applyQuaternion(this.camera.quaternion), -5);
+      const intersection = new THREE.Vector3();
+      this.raycaster.ray.intersectPlane(planeZ, intersection);
+
+      // Raycast against Earth and meteor meshes to determine whether the HTML
+      // aim overlay should be visible. If we hit a meteor or the Earth, place the
+      // internal cursor at the hit point; otherwise fall back to the camera plane.
+      let hitPoint = null;
+      try{
+        const targets = [];
+        if(this.earth) targets.push(this.earth);
+        // include spawned meteor meshes
+        for(const m of (this.meteors||[])) if(m && m.mesh) targets.push(m.mesh);
+        const hits = targets.length ? this.raycaster.intersectObjects(targets, true) : [];
+        if(hits && hits.length) { hitPoint = hits[0].point; }
+      }catch(e){ /* ignore raycast errors */ }
+
+      if(this.cursor) {
+        if(hitPoint) this.cursor.position.copy(hitPoint);
+        else this.cursor.position.copy(intersection);
+        this.cursor.lookAt(this.camera.position);
+      }
+
+      // position the HTML aim cursor only when pointer is over the canvas, aiming is enabled,
+      // and the ray actually hits the Earth or a meteor. Otherwise hide it so it isn't visible in space.
+      if(this.aimCursor && this._pointerOverCanvas && this.showAiming && hitPoint){
+        // show overlay and position it
+        this.aimCursor.style.display = 'block';
+        this.aimCursor.style.left = `${event.clientX}px`;
+        this.aimCursor.style.top = `${event.clientY}px`;
+        // ensure native cursor hidden while over canvas and hovering a valid object
+        if(this.renderer && this.renderer.domElement) this.renderer.domElement.style.cursor = 'none';
+      } else if(this.aimCursor && this._pointerOverCanvas && this.showAiming){
+        // pointer over canvas but in empty space -> hide overlay and also hide native cursor
+        // so nothing is visible in the 'void' area.
+        this.aimCursor.style.display = 'none';
+        if(this.renderer && this.renderer.domElement) this.renderer.domElement.style.cursor = 'none';
+      }
   }
 
   onKeyDown(event) { if(event.code === 'Space') this.shootMeteor(); }
@@ -670,7 +734,7 @@ class App {
     const mc = document.getElementById('meteorCount'); if(mc) mc.innerText = String(this.meteors.length);
     // predicted impact
     this.updatePredictedImpact();
-    const mouseCursor = this.scene.getObjectByName('mouseCursor'); if(mouseCursor){ mouseCursor.position.copy(this.cursor.position); }
+  // scene mouseCursor removed; HTML overlay now handles pointer visuals
 
     // camera framing update (if active)
     if(this.cameraFrame && this.cameraFrame.active){
