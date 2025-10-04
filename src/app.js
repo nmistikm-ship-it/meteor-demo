@@ -330,17 +330,42 @@ class App {
       }
     });
 
-    // impact effects: expand, fade and spin each ring around its local tangent axis
+    // impact effects: reconstruct vertices so the ring stays flush with the globe and expands along the surface
     this.impactEffects.forEach(effect=>{
-      // grow and fade
-      effect.mesh.scale.addScalar(0.05*this.simSpeed);
+      // increase the in-plane scale factor stored per-effect
+      const grow = 0.05 * this.simSpeed;
+      effect.scale = (effect.scale || 1) + grow;
+
+      // rebuild geometry positions from baseOffsets -> apply spin -> rotate into world tangent -> translate to center -> project to sphere
+      const geom = effect.mesh.geometry;
+      const posAttr = geom.attributes.position;
+      // update spin angle (used to rotate points around the ring center)
+      effect.spinAngle = (effect.spinAngle || 0) + (effect.spin * this.simSpeed);
+      const sa = effect.spinAngle;
+      // compute radius growth from basePositions (they include inner/outer ring coords)
+      for(let i=0;i<posAttr.count;i++){
+        const base = effect.basePositions[i];
+        // base is (x,y,z) in ring-local plane where length(base) is the ring radius at that vertex
+        const baseRadius = Math.sqrt(base.x*base.x + base.y*base.y);
+        const theta = Math.atan2(base.y, base.x) + sa;
+        // scaled radius
+        const r = baseRadius * effect.scale;
+        // world offset = u * (r*cos) + v * (r*sin)
+        const worldOffset = new THREE.Vector3();
+        worldOffset.addScaledVector(effect.u, Math.cos(theta) * r);
+        worldOffset.addScaledVector(effect.v, Math.sin(theta) * r);
+        const worldPos = effect.center.clone().add(worldOffset);
+        // project onto sphere surface
+        worldPos.setLength(this.earthRadius);
+        posAttr.setXYZ(i, worldPos.x, worldPos.y, worldPos.z);
+      }
+      posAttr.needsUpdate = true;
+      geom.computeBoundingSphere();
+
+      // fade
       effect.mesh.material.opacity -= 0.02*this.simSpeed;
 
-      // rotate the ring around the stored axis (world-space normal at impact)
-      if(effect.axis && typeof effect.spin === 'number'){
-        // rotate around the world-space normal so the ring spins in-plane of the surface
-        effect.mesh.rotateOnWorldAxis(effect.axis, effect.spin * this.simSpeed);
-      }
+      // (spin is applied by rotating base positions; don't rotate the mesh itself)
 
       if(effect.mesh.material.opacity <= 0){
         if(effect.mesh.parent) effect.mesh.parent.remove(effect.mesh);
@@ -381,26 +406,56 @@ class App {
     const normal = position.clone().normalize();
     // wider ring for visibility
     const geo = new THREE.RingGeometry(0.25, 0.6, 64);
-    const mat = new THREE.MeshBasicMaterial({ color:0xff3300, side:THREE.DoubleSide, transparent:true, opacity:0.9, depthWrite: false });
-    const ring = new THREE.Mesh(geo, mat);
+  // use polygonOffset to help rendering the ring flush with the globe and avoid hovering
+  const mat = new THREE.MeshBasicMaterial({ color:0xff3300, side:THREE.DoubleSide, transparent:true, opacity:0.9, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: 1 });
+  const ring = new THREE.Mesh(geo, mat);
 
     // orient ring so its plane is tangent to the sphere at the impact point
     const up = new THREE.Vector3(0,1,0);
     const quat = new THREE.Quaternion().setFromUnitVectors(up, normal);
     ring.quaternion.copy(quat);
 
-    // small offset so ring sits just above the surface
-    ring.position.copy(normal.clone().multiplyScalar(this.earthRadius + 0.005));
+  // place ring essentially flush with the surface (tiny negative offset removed)
+  ring.position.copy(normal.clone().multiplyScalar(this.earthRadius));
 
-    // apply a random in-plane rotation so rings don't all look identical
+    // prepare base positions from geometry in ring-local plane coordinates and apply a random in-plane rotation
+    const basePositions = [];
+    const posAttr = geo.attributes.position;
     const inPlaneAngle = Math.random() * Math.PI * 2;
-    ring.rotateOnWorldAxis(normal, inPlaneAngle);
+    const rotLocal = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), inPlaneAngle);
+    for(let i=0;i<posAttr.count;i++){
+      const vx = posAttr.getX(i);
+      const vy = posAttr.getY(i);
+      const vz = posAttr.getZ(i);
+      const v = new THREE.Vector3(vx, vy, vz);
+      // apply random in-plane rotation in the ring's local plane (Z axis)
+      v.applyQuaternion(rotLocal);
+      basePositions.push(v);
+    }
+
+    // Make mesh have identity transform so we can write world-space positions directly into its geometry
+    ring.position.set(0,0,0);
+    ring.quaternion.identity();
 
     this.scene.add(ring);
 
-    // store per-effect spin axis (world-space normal) and a small randomized spin speed
-    const spin = (0.02 + Math.random() * 0.06) * (Math.random() < 0.5 ? 1 : -1);
-    this.impactEffects.push({ mesh: ring, axis: normal.clone(), spin });
+    // compute orthonormal tangent basis (u,v) on the surface at the impact point
+    let u = new THREE.Vector3();
+    if (Math.abs(normal.x) < 0.9) u.set(1,0,0).cross(normal).normalize(); else u.set(0,1,0).cross(normal).normalize();
+    const v = normal.clone().cross(u).normalize();
+
+    // effect state: center (world pos), tangent basis u/v, basePositions, initial scale and spin
+    const effect = {
+      mesh: ring,
+      axis: normal.clone(),
+      spin: (0.02 + Math.random() * 0.06) * (Math.random() < 0.5 ? 1 : -1),
+      center: position.clone(),
+      u: u,
+      v: v,
+      basePositions: basePositions,
+      scale: 1
+    };
+    this.impactEffects.push(effect);
   }
 
   // NASA fetchers kept as-is but bound to this
