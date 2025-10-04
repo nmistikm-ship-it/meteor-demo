@@ -109,8 +109,10 @@ class App {
   dirLight.position.set(10, 10, 10);
   dirLight.castShadow = false;
   this.scene.add(dirLight);
-    const cameraLight = new THREE.PointLight(0xffeecc, 1.0, 100);
-    this.camera.add(cameraLight);
+  // camera-attached point light (disabled by default so camera doesn't act like a flashlight)
+  const cameraLight = new THREE.PointLight(0xffeecc, 0.0, 100);
+  cameraLight.name = 'cameraLight';
+  this.camera.add(cameraLight);
 
     // cursor group
     this.cursor = new THREE.Group();
@@ -299,12 +301,12 @@ class App {
             const srcImg = ctx.getImageData(0,0,w,h);
 
             // crater sculpting parameters (unit-sphere space)
-            // Aggressive pithole-style craters requested: increase depth significantly but clamp to avoid geometry inversion
-            const maxDepth = 0.42; // much deeper inward domes (pithole-like)
-            const thresholdLow = 0.08; // catch subtle holes
-            const thresholdHigh = 0.9; // darkness where crater is strongest
-            // choose blur radius as a fraction of image size; larger radius for softer edges around very deep pits
-            const blurRadiusPx = Math.max(2, Math.floor(Math.min(w,h) * 0.05)); // stronger blur for very soft edges
+            // For a more ball-like meteor we use gentle craters and much smaller silhouette displacement
+            const maxDepth = 0.06; // shallow inward domes so the sphere remains visibly round
+            const thresholdLow = 0.12; // slightly higher so only darker holes become craters
+            const thresholdHigh = 0.88; // darkness where crater is strongest
+            // choose a modest blur radius so craters are soft but not huge
+            const blurRadiusPx = Math.max(1, Math.floor(Math.min(w,h) * 0.02));
 
             const posAttr = geom.attributes.position;
             const uvAttr = geom.attributes.uv;
@@ -362,7 +364,8 @@ class App {
             }
 
             // use the height map to displace vertices inward by a smooth dome amount
-            // We'll bilinear sample the height map for smoother results
+            // We'll bilinear sample the height map for smoother results and add a low-frequency
+            // rock-shaping FBM so the meteor silhouette is irregular like a real asteroid.
             const sampleHeight = (u, v) => {
               const fx = u * (w - 1);
               const fy = (1 - v) * (h - 1);
@@ -380,23 +383,120 @@ class App {
               return res;
             };
 
+            // Replace previous sponge-like FBM with ridged FBM for chunkier rock facets and fewer tiny pores
+            const fract = v => v - Math.floor(v);
+            const hash = x => fract(Math.sin(x) * 43758.5453123);
+            const noise3 = (x,y,z) => {
+              const s = x * 127.1 + y * 311.7 + z * 74.7;
+              return hash(s);
+            };
+            const smoothNoise = (x,y,z) => {
+              const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+              const xf = x - xi, yf = y - yi, zf = z - zi;
+              let accum = 0;
+              for(let dx=0;dx<=1;dx++) for(let dy=0;dy<=1;dy++) for(let dz=0;dz<=1;dz++){
+                const hx = xi + dx, hy = yi + dy, hz = zi + dz;
+                const h = noise3(hx*1.0, hy*1.0, hz*1.0);
+                const wx = dx ? xf : 1 - xf;
+                const wy = dy ? yf : 1 - yf;
+                const wz = dz ? zf : 1 - zf;
+                accum += h * wx * wy * wz;
+              }
+              return accum;
+            };
+            const fbm_ridged = (x,y,z,oct=4) => {
+              let sum = 0, amp = 0.5, freq = 1.0;
+              for(let i=0;i<oct;i++){
+                // ridged noise via abs and inversion
+                const n = 1.0 - Math.abs(smoothNoise(x*freq, y*freq, z*freq) * 2.0 - 1.0);
+                sum += n * amp;
+                amp *= 0.5; freq *= 2.0;
+              }
+              return sum;
+            };
+
+            // tuned amplitudes for a rounder meteor: very small rock displacement and reduced pit amplification
+            const rockAmplitude = Math.min(0.04, maxDepth * 0.4);
+            const pitExtraDepth = Math.max(0.0, maxDepth * 0.25);
+            const lfScale = 1.2; // keep facets very low frequency
+
+            // First: detect crater centers in image space by finding local maxima in the blurred height map
+            const craterCenters = [];
+            const craterMaskThreshold = 0.18; // only consider reasonably dark regions
+            const minSeparationPx = Math.max(8, Math.floor(Math.min(w,h) * 0.03));
+            for(let py=1; py<h-1; py++){
+              for(let px=1; px<w-1; px++){
+                const idx = py*w + px;
+                const val = height[idx];
+                if(val < craterMaskThreshold) continue; // skip non-dark areas
+                // local maximum test
+                if(val >= height[idx-1] && val >= height[idx+1] && val >= height[idx-w] && val >= height[idx+w]){
+                  // ensure separation from existing centers
+                  let ok = true;
+                  for(const c of craterCenters){ const dx = c.x - px, dy = c.y - py; if((dx*dx + dy*dy) < (minSeparationPx*minSeparationPx)){ ok = false; break; } }
+                  if(!ok) continue;
+                  // sample radius and darkness to determine crater category
+                  const localDark = val;
+                  // randomized category based on darkness and some random jitter so multiple craters vary
+                  const rand = Math.random();
+                  // categories: big-deep, small-deep, big-shallow, small-shallow
+                  let category = 0;
+                  if(localDark > 0.75){ category = rand < 0.5 ? 0 : 1; } else if(localDark > 0.5){ category = rand < 0.4 ? 1 : 3; } else { category = rand < 0.3 ? 2 : 3; }
+                  // base radius in pixels depending on category
+                  const catRadius = [ Math.max(10, Math.floor(Math.min(w,h)*0.10)), Math.max(6, Math.floor(Math.min(w,h)*0.06)), Math.max(12, Math.floor(Math.min(w,h)*0.12)), Math.max(4, Math.floor(Math.min(w,h)*0.04)) ];
+                  // depth multiplier per category (big-deep, small-deep, big-shallow, small-shallow)
+                  const catDepth = [ 1.0, 1.0, 0.45, 0.35 ];
+                  craterCenters.push({ x:px, y:py, radius: catRadius[category] * (0.8 + Math.random()*0.6), depthMult: catDepth[category] * (0.8 + Math.random()*0.6), darkness: localDark });
+                }
+              }
+            }
+
+            // if no centers found, fall back to texture-driven single pass
+            const useCenters = craterCenters.length > 0;
+
             for(let i=0;i<posAttr.count;i++){
               const u = uvAttr.getX(i);
               const v = uvAttr.getY(i);
               const hval = sampleHeight(u, v) || 0;
-              // amplify crater effect non-linearly for punchier pits
-              const craterStrengthRaw = smoothstep(thresholdLow, thresholdHigh, hval);
-              const craterStrength = Math.pow(craterStrengthRaw, 1.5) * 1.6; // amplify and bias toward stronger excavation
-              if(craterStrength <= 0.001) continue;
-              const x = posAttr.getX(i), y = posAttr.getY(i), z = posAttr.getZ(i);
-              const norm = new THREE.Vector3(x, y, z).normalize();
-              // taper displacement near poles/edges to avoid pinching using normal's y component
-              const edgeFade = Math.max(0.02, 1.0 - Math.abs(norm.y) * 0.5);
-              let disp = craterStrength * maxDepth * edgeFade;
-              // safety clamp: don't push vertex past 60% of the radius to avoid inversion
-              disp = Math.min(disp, 0.6);
-              const newPos = norm.clone().multiplyScalar(Math.max(0.001, 1 - disp));
-              posAttr.setXYZ(i, newPos.x, newPos.y, newPos.z);
+
+              const vx = posAttr.getX(i), vy = posAttr.getY(i), vz = posAttr.getZ(i);
+              const dir = new THREE.Vector3(vx, vy, vz).normalize();
+
+              // chunkier ridged noise for silhouette (kept small for roundness)
+              const ridged = fbm_ridged(dir.x * lfScale, dir.y * lfScale, dir.z * lfScale, 4) - 0.35;
+              const rockDisp = ridged * rockAmplitude;
+
+              // crater displacement: either modulated by nearest detected crater center or by raw height
+              let craterDisp = 0;
+              if(useCenters){
+                // transform uv -> pixel coords (image Y inverted compared to v)
+                const px = Math.floor(u * (w-1));
+                const py = Math.floor((1 - v) * (h-1));
+                // find nearest crater center
+                let nearest = null; let nd = Infinity;
+                for(const c of craterCenters){ const dx = c.x - px, dy = c.y - py; const d2 = dx*dx + dy*dy; if(d2 < nd){ nd = d2; nearest = c; } }
+                if(nearest){
+                  const dist = Math.sqrt(nd);
+                  const fall = Math.max(0, 1 - (dist / Math.max(1, nearest.radius)));
+                  // rim shaping: sharper at rim, smoother inside using a power curve
+                  const rim = Math.pow(fall, 0.6);
+                  // crater strength influenced by texture darkness at vertex too
+                  const craterStrengthRaw = smoothstep(thresholdLow, thresholdHigh, hval);
+                  const baseCrater = rim * craterStrengthRaw;
+                  craterDisp = baseCrater * maxDepth * nearest.depthMult * Math.max(0.25, 1 - Math.abs(dir.y) * 0.2);
+                }
+              } else {
+                const craterStrengthRaw = smoothstep(thresholdLow, thresholdHigh, hval);
+                craterDisp = craterStrengthRaw * maxDepth * Math.max(0.25, 1 - Math.abs(dir.y) * 0.25);
+              }
+
+              // small extra deepening for very dark pixels, clamped
+              if(hval > 0.86) craterDisp += (hval - 0.86) / 0.14 * pitExtraDepth * 0.5;
+              craterDisp = Math.min(craterDisp, 0.32);
+
+              let finalRadius = 1.0 + rockDisp - craterDisp;
+              finalRadius = Math.max(0.003, finalRadius);
+              posAttr.setXYZ(i, dir.x * finalRadius, dir.y * finalRadius, dir.z * finalRadius);
             }
 
             posAttr.needsUpdate = true;
@@ -414,9 +514,8 @@ class App {
               const nCvs = document.createElement('canvas'); nCvs.width = w; nCvs.height = h;
               const nCtx = nCvs.getContext('2d');
               const nImg = nCtx.createImageData(w,h);
-              // strength factor controls how pronounced the normals appear; reduce slightly but keep visible
-              // increase normal strength to accentuate deep pitholes shading while keeping it stable
-              const strength = Math.max(3.0, maxDepth * 36.0);
+              // strength factor controls how pronounced the normals appear; lower it to match the shallower craters
+              const strength = Math.max(0.5, maxDepth * 10.5);
               for(let py=0; py<h; py++){
                 for(let px=0; px<w; px++){
                   const idx = py*w + px;
@@ -447,8 +546,8 @@ class App {
               normalTex.needsUpdate = true;
               // assign both albedo and normal map to material
               mat.normalMap = normalTex;
-              // user requested less aggressive normal strength but crisper lighting still
-              mat.normalScale = new THREE.Vector2(0.18, 0.18);
+              // gentler normal influence for a smoother, more spherical look
+              mat.normalScale = new THREE.Vector2(0.08, 0.08);
             }catch(err){ console.warn('normal map bake failed', err); }
 
             return finalTex;
@@ -585,154 +684,157 @@ class App {
       if(t >= 1) this.cameraFrame.active = false;
     }
 
-    // Meteors update (simple version: non-realistic faster path)
-    this.meteors.forEach(meteor=>{
-      if(!meteor.active) return;
-      const pos = meteor.mesh.position;
-      const r = pos.length();
-      // apply angular velocity (tumble) if present
-      if(meteor.angularVelocity && meteor.mesh){
-        // convert angular velocity vector (radians/sec) into a small rotation quaternion
-        const av = meteor.angularVelocity.clone().multiplyScalar(dt);
-        const ax = av.length();
-        if(ax > 0){
-          const q = new THREE.Quaternion();
-          q.setFromAxisAngle(av.normalize(), ax);
-          meteor.mesh.quaternion.premultiply(q);
-          // slight damping so the tumble slows over time
-          meteor.angularVelocity.multiplyScalar(0.998);
-        }
-      }
-      if(this.realistic){
-        // keep original complex integration: for brevity we fallback to simple motion here
-        const posMeters = pos.clone().multiplyScalar(this.SCENE_SCALE);
-        const vel = meteor.physVelocity.clone();
-        const dt = 0.02 * this.simSpeed;
-        // semi-implicit Euler gravity approximation (faster)
-        const rmag = posMeters.length();
-        const g = posMeters.clone().multiplyScalar(-this.G*this.earthMass/(rmag*rmag*rmag));
-        meteor.physVelocity.add(g.multiplyScalar(dt));
-        posMeters.add(meteor.physVelocity.clone().multiplyScalar(dt));
-        meteor.mesh.position.copy(posMeters.multiplyScalar(1/this.SCENE_SCALE));
-        if(meteor.label) meteor.label.position.copy(meteor.mesh.position);
-      } else {
-        const gravityAccel = pos.clone().normalize().multiplyScalar(-this.gravityStrength/(r*r));
-        meteor.velocity.add(gravityAccel.multiplyScalar(this.simSpeed));
-        pos.add(meteor.velocity.clone().multiplyScalar(this.simSpeed));
-      }
-      // fade out meteors that miss or have lived past their TTL (TTL in seconds)
-      meteor.ttl = meteor.ttl === undefined ? 8.0 : meteor.ttl - dt;
-      if(meteor.ttl <= 0){ meteor.fading = true; }
-      if(meteor.fading){
-        meteor.mesh.material.opacity = Math.max(0, (meteor.mesh.material.opacity||1) - 0.5 * dt);
-        if(meteor.mesh.material.opacity <= 0){ meteor.active = false; if(meteor.mesh.parent) meteor.mesh.parent.remove(meteor.mesh); if(meteor.label && meteor.label.element) meteor.label.element.remove(); }
-      }
-
-      if(r < this.earthRadius + 0.2){
-        meteor.active = false;
-        this.createImpact(pos.clone(), meteor.size);
-        this.scene.remove(meteor.mesh);
-        if(meteor.label && meteor.label.element && meteor.label.element.parentNode) meteor.label.element.parentNode.removeChild(meteor.label.element);
-        const li = this.labels.indexOf(meteor.label); if(li!==-1) this.labels.splice(li,1);
-        this.impactCount++; const ic = document.getElementById('impactCount'); if(ic) ic.innerText = String(this.impactCount);
-        try{
-          let speedAtImpact = meteor.physVelocity ? meteor.physVelocity.length() : (meteor.velocity ? meteor.velocity.length()*this.SCENE_SCALE : 0);
-          const ke = 0.5 * (meteor.mass || 1) * speedAtImpact * speedAtImpact;
-          const keTons = ke / 4.184e9;
-          const ie = document.getElementById('impactEnergy'); if(ie) ie.innerText = `${ke.toExponential(3)} J (~${keTons.toFixed(2)} kt)`;
-        }catch(e){ console.error('impact energy calc', e); const ie = document.getElementById('impactEnergy'); if(ie) ie.innerText = '-'; }
-      }
-    });
-
-    // impact effects: reconstruct vertices so the ring stays flush with the globe and expands along the surface
-    this.impactEffects.forEach(effect=>{
-  // increase the in-plane scale factor stored per-effect (time-based)
-  const growRate = effect.growRate || 0.25; // units per second
-  effect.scale = (effect.scale || 1) + growRate * dt;
-
-      // rebuild geometry positions from baseOffsets -> apply spin -> rotate into world tangent -> translate to center -> project to sphere
-      const geom = effect.mesh.geometry;
-      const posAttr = geom.attributes.position;
-      // update spin angle (used to rotate points around the ring center)
-      effect.spinAngle = (effect.spinAngle || 0) + (effect.spin * this.simSpeed);
-      const sa = effect.spinAngle;
-      // compute radius growth from basePositions (they include inner/outer ring coords)
-      for(let i=0;i<posAttr.count;i++){
-        const base = effect.basePositions[i];
-        // base is (x,y,z) in ring-local plane where length(base) is the ring radius at that vertex
-        const baseRadius = Math.sqrt(base.x*base.x + base.y*base.y);
-        const theta = Math.atan2(base.y, base.x) + sa;
-        // scaled radius
-        const r = baseRadius * effect.scale;
-        // world offset = u * (r*cos) + v * (r*sin)
-        const worldOffset = new THREE.Vector3();
-        worldOffset.addScaledVector(effect.u, Math.cos(theta) * r);
-        worldOffset.addScaledVector(effect.v, Math.sin(theta) * r);
-        // compute a shallow dome lift so ring forms a slightly curved dome above the surface
-        const maxR = effect.maxBaseRadius * effect.scale;
-        const frac = maxR > 0 ? (r / maxR) : 0;
-        // exponent controls steepness; >1 makes dome flatter at edges
-        const p = 1.8;
-        const domeFactor = Math.max(0, 1 - Math.pow(frac, p));
-        const lift = (effect.domeHeight || 0.02) * domeFactor;
-
-        // position before projection: center + in-plane offset + small lift along normal
-        const worldPos = effect.center.clone().add(worldOffset).add(effect.axis.clone().multiplyScalar(lift));
-        // place vertex at exact sphere radius + lift so it's flush/perched correctly
-        worldPos.setLength(this.earthRadius + lift);
-        posAttr.setXYZ(i, worldPos.x, worldPos.y, worldPos.z);
-      }
-      posAttr.needsUpdate = true;
-      geom.computeBoundingSphere();
-
-      // time-based life for synchronized fade (default 2s)
-      effect.age = (effect.age || 0) + dt;
-      const totalLife = effect.totalLife || 2.0;
-      const remaining = Math.max(0, totalLife - effect.age);
-      const norm = remaining / totalLife;
-      // set ring opacity according to remaining life
-      if(effect.mesh && effect.mesh.material) effect.mesh.material.opacity = norm;
-
-      // mushroom: slow rise (along normal) and synchronized fade with the ring
-      if(effect.mushroomGroup){
-        // slow scale-in to reduce pop
-        const slerp = 1 - Math.pow(Math.max(0, effect.age / totalLife), 0.5);
-        const scaleFactor = 0.6 + slerp * 0.4; // from initial 0.6 to ~1.0
-        effect.mushroomGroup.scale.setScalar(scaleFactor);
-
-        // compute rise: move the mushroom group a small amount along the impact normal each frame
-        const riseSpeed = effect.mushroomRiseSpeed || 0.002;
-        const liftSoFar = effect._mushroomLiftSoFar || 0;
-        const deltaLift = riseSpeed * dt;
-        const newLift = Math.min((effect.mushroomMaxLift || 0.1), liftSoFar + deltaLift);
-        // apply incremental translation along axis from the original surface position
-        const liftDeltaApplied = newLift - liftSoFar;
-        if(liftDeltaApplied !== 0){
-          effect.mushroomGroup.position.add(effect.axis.clone().multiplyScalar(liftDeltaApplied));
-          effect._mushroomLiftSoFar = newLift;
-        }
-
-        // fade materials using stored base opacity so fade is deterministic and synchronized
-        effect.mushroomGroup.traverse(obj=>{
-          if(obj.material){
-            const base = obj.userData && obj.userData._baseOpacity ? obj.userData._baseOpacity : 1.0;
-            obj.material.opacity = Math.max(0, base * norm);
-            obj.material.needsUpdate = true;
+    // Only update simulation state when not paused. We still render frames so UI remains responsive.
+    if(!this.paused){
+      // Meteors update (simple version: non-realistic faster path)
+      this.meteors.forEach(meteor=>{
+        if(!meteor.active) return;
+        const pos = meteor.mesh.position;
+        const r = pos.length();
+        // apply angular velocity (tumble) if present
+        if(meteor.angularVelocity && meteor.mesh){
+          // convert angular velocity vector (radians/sec) into a small rotation quaternion
+          const av = meteor.angularVelocity.clone().multiplyScalar(dt);
+          const ax = av.length();
+          if(ax > 0){
+            const q = new THREE.Quaternion();
+            q.setFromAxisAngle(av.normalize(), ax);
+            meteor.mesh.quaternion.premultiply(q);
+            // slight damping so the tumble slows over time
+            meteor.angularVelocity.multiplyScalar(0.998);
           }
-        });
+        }
+        if(this.realistic){
+          // keep original complex integration: for brevity we fallback to simple motion here
+          const posMeters = pos.clone().multiplyScalar(this.SCENE_SCALE);
+          const vel = meteor.physVelocity.clone();
+          const dtInt = 0.02 * this.simSpeed;
+          // semi-implicit Euler gravity approximation (faster)
+          const rmag = posMeters.length();
+          const g = posMeters.clone().multiplyScalar(-this.G*this.earthMass/(rmag*rmag*rmag));
+          meteor.physVelocity.add(g.multiplyScalar(dtInt));
+          posMeters.add(meteor.physVelocity.clone().multiplyScalar(dtInt));
+          meteor.mesh.position.copy(posMeters.multiplyScalar(1/this.SCENE_SCALE));
+          if(meteor.label) meteor.label.position.copy(meteor.mesh.position);
+        } else {
+          const gravityAccel = pos.clone().normalize().multiplyScalar(-this.gravityStrength/(r*r));
+          meteor.velocity.add(gravityAccel.multiplyScalar(this.simSpeed));
+          pos.add(meteor.velocity.clone().multiplyScalar(this.simSpeed));
+        }
+        // fade out meteors that miss or have lived past their TTL (TTL in seconds)
+        meteor.ttl = meteor.ttl === undefined ? 8.0 : meteor.ttl - dt;
+        if(meteor.ttl <= 0){ meteor.fading = true; }
+        if(meteor.fading){
+          meteor.mesh.material.opacity = Math.max(0, (meteor.mesh.material.opacity||1) - 0.5 * dt);
+          if(meteor.mesh.material.opacity <= 0){ meteor.active = false; if(meteor.mesh.parent) meteor.mesh.parent.remove(meteor.mesh); if(meteor.label && meteor.label.element) meteor.label.element.remove(); }
+        }
 
-        // ensure mushrooms are removed when life ends
-        if(effect.age >= totalLife){ if(effect.mushroomGroup.parent) effect.mushroomGroup.parent.remove(effect.mushroomGroup); effect.mushroomGroup = null; }
-      }
+        if(r < this.earthRadius + 0.2){
+          meteor.active = false;
+          this.createImpact(pos.clone(), meteor.size);
+          this.scene.remove(meteor.mesh);
+          if(meteor.label && meteor.label.element && meteor.label.element.parentNode) meteor.label.element.parentNode.removeChild(meteor.label.element);
+          const li = this.labels.indexOf(meteor.label); if(li!==-1) this.labels.splice(li,1);
+          this.impactCount++; const ic = document.getElementById('impactCount'); if(ic) ic.innerText = String(this.impactCount);
+          try{
+            let speedAtImpact = meteor.physVelocity ? meteor.physVelocity.length() : (meteor.velocity ? meteor.velocity.length()*this.SCENE_SCALE : 0);
+            const ke = 0.5 * (meteor.mass || 1) * speedAtImpact * speedAtImpact;
+            const keTons = ke / 4.184e9;
+            const ie = document.getElementById('impactEnergy'); if(ie) ie.innerText = `${ke.toExponential(3)} J (~${keTons.toFixed(2)} kt)`;
+          }catch(e){ console.error('impact energy calc', e); const ie = document.getElementById('impactEnergy'); if(ie) ie.innerText = '-'; }
+        }
+      });
 
-      // (spin is applied by rotating base positions; don't rotate the mesh itself)
+      // impact effects: reconstruct vertices so the ring stays flush with the globe and expands along the surface
+      this.impactEffects.forEach(effect=>{
+        // increase the in-plane scale factor stored per-effect (time-based)
+        const growRate = effect.growRate || 0.25; // units per second
+        effect.scale = (effect.scale || 1) + growRate * dt;
 
-      if(effect.mesh.material.opacity <= 0){ if(effect.mesh.parent) effect.mesh.parent.remove(effect.mesh); }
-    });
-  // keep effects which still have visible ring or still have a mushroom group
-  this.impactEffects = this.impactEffects.filter(e => (e.mesh && e.mesh.material && e.mesh.material.opacity > 0) || (e.mushroomGroup));
+        // rebuild geometry positions from baseOffsets -> apply spin -> rotate into world tangent -> translate to center -> project to sphere
+        const geom = effect.mesh.geometry;
+        const posAttr = geom.attributes.position;
+        // update spin angle (used to rotate points around the ring center)
+        effect.spinAngle = (effect.spinAngle || 0) + (effect.spin * this.simSpeed);
+        const sa = effect.spinAngle;
+        // compute radius growth from basePositions (they include inner/outer ring coords)
+        for(let i=0;i<posAttr.count;i++){
+          const base = effect.basePositions[i];
+          // base is (x,y,z) in ring-local plane where length(base) is the ring radius at that vertex
+          const baseRadius = Math.sqrt(base.x*base.x + base.y*base.y);
+          const theta = Math.atan2(base.y, base.x) + sa;
+          // scaled radius
+          const r = baseRadius * effect.scale;
+          // world offset = u * (r*cos) + v * (r*sin)
+          const worldOffset = new THREE.Vector3();
+          worldOffset.addScaledVector(effect.u, Math.cos(theta) * r);
+          worldOffset.addScaledVector(effect.v, Math.sin(theta) * r);
+          // compute a shallow dome lift so ring forms a slightly curved dome above the surface
+          const maxR = effect.maxBaseRadius * effect.scale;
+          const frac = maxR > 0 ? (r / maxR) : 0;
+          // exponent controls steepness; >1 makes dome flatter at edges
+          const p = 1.8;
+          const domeFactor = Math.max(0, 1 - Math.pow(frac, p));
+          const lift = (effect.domeHeight || 0.02) * domeFactor;
 
-    this.meteors = this.meteors.filter(m=>m.active);
+          // position before projection: center + in-plane offset + small lift along normal
+          const worldPos = effect.center.clone().add(worldOffset).add(effect.axis.clone().multiplyScalar(lift));
+          // place vertex at exact sphere radius + lift so it's flush/perched correctly
+          worldPos.setLength(this.earthRadius + lift);
+          posAttr.setXYZ(i, worldPos.x, worldPos.y, worldPos.z);
+        }
+        posAttr.needsUpdate = true;
+        geom.computeBoundingSphere();
+
+        // time-based life for synchronized fade (default 2s)
+        effect.age = (effect.age || 0) + dt;
+        const totalLife = effect.totalLife || 2.0;
+        const remaining = Math.max(0, totalLife - effect.age);
+        const norm = remaining / totalLife;
+        // set ring opacity according to remaining life
+        if(effect.mesh && effect.mesh.material) effect.mesh.material.opacity = norm;
+
+        // mushroom: slow rise (along normal) and synchronized fade with the ring
+        if(effect.mushroomGroup){
+          // slow scale-in to reduce pop
+          const slerp = 1 - Math.pow(Math.max(0, effect.age / totalLife), 0.5);
+          const scaleFactor = 0.6 + slerp * 0.4; // from initial 0.6 to ~1.0
+          effect.mushroomGroup.scale.setScalar(scaleFactor);
+
+          // compute rise: move the mushroom group a small amount along the impact normal each frame
+          const riseSpeed = effect.mushroomRiseSpeed || 0.002;
+          const liftSoFar = effect._mushroomLiftSoFar || 0;
+          const deltaLift = riseSpeed * dt;
+          const newLift = Math.min((effect.mushroomMaxLift || 0.1), liftSoFar + deltaLift);
+          // apply incremental translation along axis from the original surface position
+          const liftDeltaApplied = newLift - liftSoFar;
+          if(liftDeltaApplied !== 0){
+            effect.mushroomGroup.position.add(effect.axis.clone().multiplyScalar(liftDeltaApplied));
+            effect._mushroomLiftSoFar = newLift;
+          }
+
+          // fade materials using stored base opacity so fade is deterministic and synchronized
+          effect.mushroomGroup.traverse(obj=>{
+            if(obj.material){
+              const base = obj.userData && obj.userData._baseOpacity ? obj.userData._baseOpacity : 1.0;
+              obj.material.opacity = Math.max(0, base * norm);
+              obj.material.needsUpdate = true;
+            }
+          });
+
+          // ensure mushrooms are removed when life ends
+          if(effect.age >= totalLife){ if(effect.mushroomGroup.parent) effect.mushroomGroup.parent.remove(effect.mushroomGroup); effect.mushroomGroup = null; }
+        }
+
+        // (spin is applied by rotating base positions; don't rotate the mesh itself)
+
+        if(effect.mesh.material.opacity <= 0){ if(effect.mesh.parent) effect.mesh.parent.remove(effect.mesh); }
+      });
+      // keep effects which still have visible ring or still have a mushroom group
+      this.impactEffects = this.impactEffects.filter(e => (e.mesh && e.mesh.material && e.mesh.material.opacity > 0) || (e.mushroomGroup));
+
+      this.meteors = this.meteors.filter(m=>m.active);
+    }
 
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
