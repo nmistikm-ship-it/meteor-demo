@@ -37,6 +37,7 @@ class App {
     this.predictedImpactMarker = null;
     // camera framing state for smooth on-spawn framing
     this.cameraFrame = { active: false };
+    this._lastFrameTime = null;
   }
 
   // Smoothly frame the camera to look at `targetPos` and move camera to `endCamPos` over `durationMs`
@@ -160,7 +161,9 @@ class App {
     if (el('reset')) el('reset').onclick = () => this.resetScene();
     if (el('pause')) el('pause').onclick = (e) => { this.paused = !this.paused; e.target.innerText = this.paused ? 'Resume' : 'Pause'; };
     if (el('toggleAiming')) el('toggleAiming').onclick = (e) => { this.showAiming = !this.showAiming; e.target.innerText = this.showAiming ? 'Hide Aiming' : 'Show Aiming'; const aim = this.scene.getObjectByName('aimingLine'); if (aim) aim.visible = this.showAiming; };
-    if (el('fire')) el('fire').onclick = () => this.shootMeteor();
+  if (el('fire')) el('fire').onclick = () => this.shootMeteor();
+  // wire meteor size UI
+  const ms = el('meteorSize'); if(ms){ const mv = el('meteorSizeVal'); mv.innerText = ms.value; ms.oninput = (e)=>{ if(mv) mv.innerText = parseFloat(e.target.value).toFixed(1); }; }
     if (el('loadMore')) el('loadMore').onclick = () => this.fetchAsteroidList(true);
     if (el('highResTex')) el('highResTex').onclick = () => this.loadHighResEarthTexture();
     const uploadInput = el('uploadTex');
@@ -236,12 +239,17 @@ class App {
   shootMeteor() {
     const speedEl = document.getElementById('speed');
     const speed = speedEl ? parseFloat(speedEl.value) : 0.05;
-    const size = 0.5;
+    const sizeEl = document.getElementById('meteorSize');
+    const size = sizeEl ? parseFloat(sizeEl.value) : 0.5;
     const meteorGeo = new THREE.SphereGeometry(1, 16, 16);
-    const meteorMat = new THREE.MeshStandardMaterial({ color:0x888888, metalness:0.2, roughness:0.5 });
+    const meteorMat = new THREE.MeshStandardMaterial({ color:0x888888, metalness:0.2, roughness:0.5, transparent:true, opacity:1.0 });
     const meteor = new THREE.Mesh(meteorGeo, meteorMat);
     meteor.position.copy(this.camera.position);
     const dir = new THREE.Vector3().subVectors(this.cursor.position, this.camera.position).normalize();
+    // If we have a predicted impact marker, aim directly at that point so meteors go toward the globe
+    if(this.predictedImpactMarker && this.predictedImpactMarker.visible){
+      dir.copy(this.predictedImpactMarker.position).sub(meteor.position).normalize();
+    }
     const density = 3000;
     const volume = (4/3)*Math.PI*Math.pow(size/2,3);
     const mass = density * volume;
@@ -255,7 +263,10 @@ class App {
     const radiusScene = (size / 2) * meterToScene;
     const visScale = Math.max(radiusScene, 1e-6); // avoid zero scale but keep real size
     meteor.scale.setScalar(visScale);
-    this.meteors.push({ mesh:meteor, velocity:dir.multiplyScalar(speed), physVelocity, active:true, label, mass, area, size });
+    // Give meteors a TTL and make their scene velocity slightly slower so they don't fly into space
+    const sceneVelocity = dir.clone().multiplyScalar(speed * 0.6);
+    meteor.material.transparent = true; meteor.material.opacity = 1.0;
+    this.meteors.push({ mesh:meteor, velocity:sceneVelocity, physVelocity, active:true, label, mass, area, size, ttl: 800, fading:false });
   }
 
   resetScene() {
@@ -266,8 +277,13 @@ class App {
     this.impactCount = 0; const ic = document.getElementById('impactCount'); if(ic) ic.innerText = '0';
   }
 
-  animate() {
-    requestAnimationFrame(() => this.animate());
+  animate(time) {
+    // schedule next frame and compute dt
+    requestAnimationFrame(this.animate.bind(this));
+    const now = time || performance.now();
+    const dtMs = this._lastFrameTime ? (now - this._lastFrameTime) : 16;
+    const dt = (dtMs / 1000) * this.simSpeed; // seconds scaled by simSpeed
+    this._lastFrameTime = now;
     // Pulse cursor
     const ringMesh = this.cursor && this.cursor.getObjectByName && this.cursor.getObjectByName('cursorRing');
     if(ringMesh){ const pulse = 1 + 0.1 * Math.sin(Date.now() * 0.005); this.cursor.scale.set(pulse,pulse,pulse); }
@@ -314,9 +330,17 @@ class App {
         meteor.velocity.add(gravityAccel.multiplyScalar(this.simSpeed));
         pos.add(meteor.velocity.clone().multiplyScalar(this.simSpeed));
       }
+      // fade out meteors that miss or have lived past their TTL (TTL in seconds)
+      meteor.ttl = meteor.ttl === undefined ? 8.0 : meteor.ttl - dt;
+      if(meteor.ttl <= 0){ meteor.fading = true; }
+      if(meteor.fading){
+        meteor.mesh.material.opacity = Math.max(0, (meteor.mesh.material.opacity||1) - 0.5 * dt);
+        if(meteor.mesh.material.opacity <= 0){ meteor.active = false; if(meteor.mesh.parent) meteor.mesh.parent.remove(meteor.mesh); if(meteor.label && meteor.label.element) meteor.label.element.remove(); }
+      }
+
       if(r < this.earthRadius + 0.2){
         meteor.active = false;
-        this.createImpact(pos.clone());
+        this.createImpact(pos.clone(), meteor.size);
         this.scene.remove(meteor.mesh);
         if(meteor.label && meteor.label.element && meteor.label.element.parentNode) meteor.label.element.parentNode.removeChild(meteor.label.element);
         const li = this.labels.indexOf(meteor.label); if(li!==-1) this.labels.splice(li,1);
@@ -332,9 +356,9 @@ class App {
 
     // impact effects: reconstruct vertices so the ring stays flush with the globe and expands along the surface
     this.impactEffects.forEach(effect=>{
-      // increase the in-plane scale factor stored per-effect
-      const grow = 0.05 * this.simSpeed;
-      effect.scale = (effect.scale || 1) + grow;
+  // increase the in-plane scale factor stored per-effect (time-based)
+  const growRate = effect.growRate || 0.25; // units per second
+  effect.scale = (effect.scale || 1) + growRate * dt;
 
       // rebuild geometry positions from baseOffsets -> apply spin -> rotate into world tangent -> translate to center -> project to sphere
       const geom = effect.mesh.geometry;
@@ -354,24 +378,69 @@ class App {
         const worldOffset = new THREE.Vector3();
         worldOffset.addScaledVector(effect.u, Math.cos(theta) * r);
         worldOffset.addScaledVector(effect.v, Math.sin(theta) * r);
-        const worldPos = effect.center.clone().add(worldOffset);
-        // project onto sphere surface
-        worldPos.setLength(this.earthRadius);
+        // compute a shallow dome lift so ring forms a slightly curved dome above the surface
+        const maxR = effect.maxBaseRadius * effect.scale;
+        const frac = maxR > 0 ? (r / maxR) : 0;
+        // exponent controls steepness; >1 makes dome flatter at edges
+        const p = 1.8;
+        const domeFactor = Math.max(0, 1 - Math.pow(frac, p));
+        const lift = (effect.domeHeight || 0.02) * domeFactor;
+
+        // position before projection: center + in-plane offset + small lift along normal
+        const worldPos = effect.center.clone().add(worldOffset).add(effect.axis.clone().multiplyScalar(lift));
+        // place vertex at exact sphere radius + lift so it's flush/perched correctly
+        worldPos.setLength(this.earthRadius + lift);
         posAttr.setXYZ(i, worldPos.x, worldPos.y, worldPos.z);
       }
       posAttr.needsUpdate = true;
       geom.computeBoundingSphere();
 
-      // fade
-      effect.mesh.material.opacity -= 0.02*this.simSpeed;
+      // time-based life for synchronized fade (default 2s)
+      effect.age = (effect.age || 0) + dt;
+      const totalLife = effect.totalLife || 2.0;
+      const remaining = Math.max(0, totalLife - effect.age);
+      const norm = remaining / totalLife;
+      // set ring opacity according to remaining life
+      if(effect.mesh && effect.mesh.material) effect.mesh.material.opacity = norm;
+
+      // mushroom: slow rise (along normal) and synchronized fade with the ring
+      if(effect.mushroomGroup){
+        // slow scale-in to reduce pop
+        const slerp = 1 - Math.pow(Math.max(0, effect.age / totalLife), 0.5);
+        const scaleFactor = 0.6 + slerp * 0.4; // from initial 0.6 to ~1.0
+        effect.mushroomGroup.scale.setScalar(scaleFactor);
+
+        // compute rise: move the mushroom group a small amount along the impact normal each frame
+        const riseSpeed = effect.mushroomRiseSpeed || 0.002;
+        const liftSoFar = effect._mushroomLiftSoFar || 0;
+        const deltaLift = riseSpeed * dt;
+        const newLift = Math.min((effect.mushroomMaxLift || 0.1), liftSoFar + deltaLift);
+        // apply incremental translation along axis from the original surface position
+        const liftDeltaApplied = newLift - liftSoFar;
+        if(liftDeltaApplied !== 0){
+          effect.mushroomGroup.position.add(effect.axis.clone().multiplyScalar(liftDeltaApplied));
+          effect._mushroomLiftSoFar = newLift;
+        }
+
+        // fade materials using stored base opacity so fade is deterministic and synchronized
+        effect.mushroomGroup.traverse(obj=>{
+          if(obj.material){
+            const base = obj.userData && obj.userData._baseOpacity ? obj.userData._baseOpacity : 1.0;
+            obj.material.opacity = Math.max(0, base * norm);
+            obj.material.needsUpdate = true;
+          }
+        });
+
+        // ensure mushrooms are removed when life ends
+        if(effect.age >= totalLife){ if(effect.mushroomGroup.parent) effect.mushroomGroup.parent.remove(effect.mushroomGroup); effect.mushroomGroup = null; }
+      }
 
       // (spin is applied by rotating base positions; don't rotate the mesh itself)
 
-      if(effect.mesh.material.opacity <= 0){
-        if(effect.mesh.parent) effect.mesh.parent.remove(effect.mesh);
-      }
+      if(effect.mesh.material.opacity <= 0){ if(effect.mesh.parent) effect.mesh.parent.remove(effect.mesh); }
     });
-    this.impactEffects = this.impactEffects.filter(e=>e.mesh.material.opacity>0);
+  // keep effects which still have visible ring or still have a mushroom group
+  this.impactEffects = this.impactEffects.filter(e => (e.mesh && e.mesh.material && e.mesh.material.opacity > 0) || (e.mushroomGroup));
 
     this.meteors = this.meteors.filter(m=>m.active);
 
@@ -401,22 +470,54 @@ class App {
     if(hitPos){ this.predictedImpactMarker.position.copy(hitPos); this.predictedImpactMarker.visible = true; } else { this.predictedImpactMarker.visible = false; }
   }
 
-  createImpact(position){
-    // make a larger, more visible impact ring
+  createImpact(position, size = 1){
+    // make a larger, size-dependent impact ring + mushroom
     const normal = position.clone().normalize();
-    // wider ring for visibility
-    const geo = new THREE.RingGeometry(0.25, 0.6, 64);
-  // use polygonOffset to help rendering the ring flush with the globe and avoid hovering
-  const mat = new THREE.MeshBasicMaterial({ color:0xff3300, side:THREE.DoubleSide, transparent:true, opacity:0.9, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: 1 });
-  const ring = new THREE.Mesh(geo, mat);
+
+  // Map meteor diameter (meters) to a visual size in scene units.
+  // Invert and compress the mapping so small meteors appear relatively larger and big meteors are less gigantic.
+  // This produces the behavior you requested: small meteors' rings/mushrooms are more visible, large meteors are visually tempered.
+  const sizeMeters = Math.max(0.01, size || 1);
+  // Map meteor diameter (meters) -> visual impact radius (scene units) using
+  // a smooth, non-linear interpolation so:
+  //  - very small meteors (~0.1 m) -> small impact (approx area of Ireland)
+  //  - medium meteors (~22-30 m) -> medium impact (approx area of Poland)
+  //  - very large meteors (~50 m) -> large impact (approx area of Algeria)
+  // We convert representative country areas -> equivalent circular radii (km) then to scene units
+  // (1 scene unit == 1000 km because SCENE_SCALE = 1e6 m / scene unit).
+  const MIN_MET = 0.1; // meters slider min
+  const MAX_MET = 50.0; // meters slider max
+  // Representative country areas (km^2)
+  const AREA_IRELAND = 84421; // km^2 (island of Ireland ~84k km^2)
+  const AREA_POLAND = 312679; // km^2
+  const AREA_ALGERIA = 2381741; // km^2
+  // convert area -> radius (km) -> scene units (km -> scene units = km / 1000)
+  const radiusIreland = Math.sqrt(AREA_IRELAND / Math.PI) / 1000.0; // scene units
+  const radiusPoland  = Math.sqrt(AREA_POLAND  / Math.PI) / 1000.0;
+  const radiusAlgeria = Math.sqrt(AREA_ALGERIA / Math.PI) / 1000.0;
+
+  // normalize input size (0..1)
+  const tRaw = (sizeMeters - MIN_MET) / (MAX_MET - MIN_MET);
+  const t = Math.max(0, Math.min(1, tRaw));
+  // use a power curve to bias mid-range values toward the Poland-sized target
+  const gamma = 2.2; // tuned so ~25m maps near Poland radius
+  const tAdj = Math.pow(t, gamma);
+  // interpolate between Ireland and Algeria radii
+  const visualBase = radiusIreland + (radiusAlgeria - radiusIreland) * tAdj;
+
+    // Create ring geometry sized relative to visualBase
+  const ringInner = visualBase * 0.30;
+  const ringOuter = visualBase * 0.85;
+    const ringSegs = Math.max(32, Math.floor(16 + visualBase * 64));
+    const geo = new THREE.RingGeometry(ringInner, ringOuter, ringSegs);
+    const mat = new THREE.MeshBasicMaterial({ color:0xff4400, side:THREE.DoubleSide, transparent:true, opacity:0.95, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: 1 });
+    const ring = new THREE.Mesh(geo, mat);
 
     // orient ring so its plane is tangent to the sphere at the impact point
     const up = new THREE.Vector3(0,1,0);
     const quat = new THREE.Quaternion().setFromUnitVectors(up, normal);
     ring.quaternion.copy(quat);
-
-  // place ring essentially flush with the surface (tiny negative offset removed)
-  ring.position.copy(normal.clone().multiplyScalar(this.earthRadius));
+    ring.position.copy(normal.clone().multiplyScalar(this.earthRadius));
 
     // prepare base positions from geometry in ring-local plane coordinates and apply a random in-plane rotation
     const basePositions = [];
@@ -428,7 +529,6 @@ class App {
       const vy = posAttr.getY(i);
       const vz = posAttr.getZ(i);
       const v = new THREE.Vector3(vx, vy, vz);
-      // apply random in-plane rotation in the ring's local plane (Z axis)
       v.applyQuaternion(rotLocal);
       basePositions.push(v);
     }
@@ -436,7 +536,6 @@ class App {
     // Make mesh have identity transform so we can write world-space positions directly into its geometry
     ring.position.set(0,0,0);
     ring.quaternion.identity();
-
     this.scene.add(ring);
 
     // compute orthonormal tangent basis (u,v) on the surface at the impact point
@@ -444,7 +543,11 @@ class App {
     if (Math.abs(normal.x) < 0.9) u.set(1,0,0).cross(normal).normalize(); else u.set(0,1,0).cross(normal).normalize();
     const v = normal.clone().cross(u).normalize();
 
-    // effect state: center (world pos), tangent basis u/v, basePositions, initial scale and spin
+    // compute maximum base radius so we can scale dome height relative to ring size
+    let maxBaseRadius = 0;
+    for (let i=0;i<basePositions.length;i++){ const b = basePositions[i]; const br = Math.sqrt(b.x*b.x + b.y*b.y); if(br>maxBaseRadius) maxBaseRadius = br; }
+
+    // effect state for ring
     const effect = {
       mesh: ring,
       axis: normal.clone(),
@@ -453,8 +556,94 @@ class App {
       u: u,
       v: v,
       basePositions: basePositions,
-      scale: 1
+      scale: 1,
+      maxBaseRadius: maxBaseRadius,
+      domeHeight: Math.max(0.02, Math.min(2.0, maxBaseRadius * 0.75))
     };
+
+    // --- mushroom cloud: build a higher-res, fluffy cap using multiple overlapping spheres (fluffs)
+    try{
+      const cloudBase = visualBase; // base radius for the cap
+      const mushroom = new THREE.Group();
+
+      // stem (short and stubby relative to cloudBase)
+      const stemRadius = cloudBase * 0.22;
+      const stemHeight = cloudBase * 0.9;
+      const stemGeo = new THREE.CylinderGeometry(Math.max(0.001, stemRadius*0.5), stemRadius, Math.max(0.01, stemHeight), 16, 1);
+      const stemMat = new THREE.MeshStandardMaterial({ color:0x333022, roughness:0.95, metalness:0.0, transparent:true, opacity:0.9, depthWrite:false });
+      const stem = new THREE.Mesh(stemGeo, stemMat);
+      stem.position.set(0, stemHeight*0.5, 0);
+      mushroom.add(stem);
+
+  // central cap: overlapping spheres to simulate fluff + a blended core for cohesion
+  const capMat = new THREE.MeshStandardMaterial({ color:0xCCAA88, roughness:0.92, metalness:0.0, transparent:true, opacity:0.96, depthWrite:false });
+  // blended core (slightly flattened, higher-res) to make silhouette cohesive
+  const core = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), capMat.clone());
+  core.scale.set(cloudBase*1.05, cloudBase*0.65, cloudBase*1.05);
+  core.position.set(0, stemHeight*0.9 + cloudBase*0.05, 0);
+  mushroom.add(core);
+
+  const capMain = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 20), capMat.clone());
+  capMain.scale.set(cloudBase*0.9, cloudBase*0.55, cloudBase*0.9);
+  capMain.position.set(0, stemHeight*0.9 + cloudBase*0.05, 0);
+  mushroom.add(capMain);
+
+      // side fluffs
+      // place fluffs tightly around the core with smaller sizes so they don't protrude too much
+      const fluffCount = Math.max(4, Math.floor(4 + cloudBase * 2));
+      for(let i=0;i<fluffCount;i++){
+        const a = (i / fluffCount) * Math.PI * 2 + (Math.random()*0.12-0.06);
+        const r = cloudBase * (0.18 + Math.random()*0.18); // tighter radial offsets
+        const x = Math.cos(a) * r;
+        const z = Math.sin(a) * r;
+        const y = stemHeight*0.9 + cloudBase*0.05 + (Math.random()*0.08-0.03);
+        const s = cloudBase * (0.22 + Math.random()*0.25); // smaller fluffs
+        const fluff = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12), capMat.clone());
+        fluff.scale.set(s, s*0.65, s);
+        fluff.position.set(x, y, z);
+        fluff.rotation.set(Math.random()*0.15, Math.random()*Math.PI, Math.random()*0.15);
+        mushroom.add(fluff);
+      }
+
+      // a few smaller top fluffs for a rounded crown
+      for(let j=0;j<3;j++){
+        const s = cloudBase * (0.20 + Math.random()*0.22);
+        const fluff = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12), capMat.clone());
+        fluff.scale.set(s, s*0.55, s);
+        fluff.position.set((Math.random()-0.5)*cloudBase*0.12, stemHeight*0.9 + cloudBase*0.16 + Math.random()*cloudBase*0.04, (Math.random()-0.5)*cloudBase*0.12);
+        mushroom.add(fluff);
+      }
+
+      // place mushroom on the surface and orient along normal
+      const surfacePos = position.clone().setLength(this.earthRadius + 0.001);
+      mushroom.position.copy(surfacePos);
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), normal.clone());
+      mushroom.quaternion.copy(q);
+      mushroom.scale.setScalar(0.6);
+      this.scene.add(mushroom);
+
+      // Ensure each mushroom material stores a base opacity so we can set a deterministic fade
+      mushroom.traverse(obj=>{
+        if(obj.material){
+          // make transparent if not already
+          obj.material.transparent = true;
+          // store original opacity on userData so we can fade to norm * base
+          obj.userData = obj.userData || {};
+          obj.userData._baseOpacity = (typeof obj.material.opacity === 'number') ? obj.material.opacity : 1.0;
+        }
+      });
+
+      // store animation params
+      effect.mushroomGroup = mushroom;
+      // make mushroom slow and longer lived; store a rise speed and a maximum lift above the surface
+      effect.mushroomLife = 4.0 + Math.min(10.0, visualBase * 6.0); // larger clouds live longer
+      // rise speed (scene units per second) - small and proportional to visualBase, tuned for subtlety
+      effect.mushroomRiseSpeed = Math.max(0.00005, visualBase * 0.02);
+      // maximum lift above the sphere surface (scene units) so mushroom never 'launches' to space
+      effect.mushroomMaxLift = Math.max(0.01, visualBase * 0.45);
+      effect.mushroomBaseScale = cloudBase;
+    }catch(e){ console.warn('mushroom creation failed', e); }
+
     this.impactEffects.push(effect);
   }
 
