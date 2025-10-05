@@ -1309,7 +1309,7 @@ class App {
   // store animation params
   effect.mushroomGroup = mushroom;
   // make mushroom longer lived; store a faster rise speed and a larger maximum lift
-  effect.mushroomLife = 6.0 + Math.min(14.0, visualBase * 8.0); // larger clouds live longer
+  effect.mushroomLife = 7.5 + Math.min(15.0, visualBase * 10.0); // larger clouds live longer
   // rise speed (scene units per second) - increased to make the mushroom appear taller quicker
   effect.mushroomRiseSpeed = Math.max(0.0001, visualBase * 0.035);
   // maximum lift above the sphere surface (scene units) so mushroom rises taller
@@ -1347,7 +1347,7 @@ class App {
         this.asteroidList = this.asteroidList || [];
         this.asteroidList.push(a);
         if(select){
-          // If custom list div is used, create clickable item entries
+          // If custom list div is used then create clickable item entries
           if(select.classList && select.classList.contains('custom-list')){
             const item = document.createElement('div'); item.className = 'item'; item.dataset.id = a.id;
             const txt = document.createElement('div'); txt.className = 'label-text'; txt.innerText = `${a.name} (${a.estimated_diameter.meters.estimated_diameter_max.toFixed(0)} m)`;
