@@ -127,7 +127,9 @@ class App {
 
     // Earth
     const earthGeo = new THREE.SphereGeometry(this.earthRadius, 32, 32);
-    const earthMat = new THREE.MeshPhongMaterial({ color: 0x2233ff });
+    // Use a PBR-friendly material with a lighter base color so the globe is visible
+    // even if a texture fails to load. Texture loader will overwrite the map when available.
+    const earthMat = new THREE.MeshStandardMaterial({ color: 0x88aaff, roughness: 0.9, metalness: 0.0 });
       const earth = new THREE.Mesh(earthGeo, earthMat);
       this.scene.add(earth);
       // keep a direct reference to the Earth mesh so we can test ray intersections

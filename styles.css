@@ -177,3 +177,25 @@ canvas { display:block; }
 @media (max-width: 800px){
   #ui{ width: 260px; left: 10px; top: 10px; }
 }
+
+/* Stacked upload buttons: brown (top), beige (bottom) */
+#ui .upload-stack .upload-top {
+  background: linear-gradient(180deg, #a0522d, #7c3f19);
+  color: #fff8e1;
+  border-radius: 8px 8px 0 0;
+  border: 1px solid #7c3f19;
+  box-shadow: 0 4px 12px rgba(160,82,45,0.18);
+  font-weight: 700;
+  padding: 12px;
+  margin-bottom: 0;
+}
+#ui .upload-stack .upload-bottom {
+  background: linear-gradient(180deg, #f5e6c8, #e7d3b0);
+  color: #6b4f23;
+  border-radius: 0 0 8px 8px;
+  border: 1px solid #e7d3b0;
+  box-shadow: 0 2px 8px rgba(245,230,200,0.12);
+  font-weight: 700;
+  padding: 12px;
+  margin-top: -1px;
+}
