@@ -82,7 +82,7 @@ canvas { display:block; }
 /* Dark themed asteroid list */
 /* custom list for asteroids (replaces native select for consistent styling) */
 #asteroidSelect.custom-list { background: linear-gradient(180deg, rgba(10,12,16,0.95), rgba(8,10,12,0.9)); color: #cfe6ff; border: 1px solid rgba(255,255,255,0.03); padding: 6px; border-radius: 8px; height: 160px; overflow-y: auto; display:flex; flex-direction:column; gap:6px; }
-.custom-list .item { position: relative; padding: 8px 12px; background: transparent; color: rgba(223,239,255,0.95); font-weight: 700; font-size: 12px; border-radius: 6px; cursor: pointer; display:flex; align-items:center; justify-content:space-between; }
+.custom-list .item { position: relative; padding: 8px 12px 18px 12px; background: transparent; color: rgba(223,239,255,0.95); font-weight: 700; font-size: 12px; border-radius: 6px; cursor: pointer; display:flex; align-items:center; justify-content:space-between; }
 .custom-list .item:hover { background: rgba(255,255,255,0.02); }
 .custom-list .item.selected { background: rgba(10,100,220,0.95); color: #fff; }
 /* Neon red separators left and right of each item using the provided neon image file 'neon-sep.png' (project root) */
@@ -91,6 +91,10 @@ canvas { display:block; }
 .custom-list .item:after { right: 6px; transform: scaleX(-1); }
 /* ensure text doesn't overlap the neon edges */
 .custom-list .item .label-text { margin: 0 14px; flex:1; text-align:left; }
+/* horizontal neon separator line (uses same neon image stretched horizontally) */
+.custom-list .item .neon-sep-horizontal { position: absolute; left: 18px; right: 18px; bottom: 6px; height: 4px; background-image: url('neon-sep.png'); background-repeat: repeat-x; background-size: auto 100%; opacity: 0.98; pointer-events:none; filter: drop-shadow(0 2px 8px rgba(255,40,10,0.7)); border-radius:4px; }
+/* only show separator between items, not after the final item */
+.custom-list .item:last-child .neon-sep-horizontal { display:none; }
 /* Selected row look for native select varies by browser; provide a separate visible `#asteroidData` info bar to mirror the screenshot */
 #asteroidData { margin-top: 8px; padding: 8px; background: linear-gradient(180deg, rgba(0,0,0,0.55), rgba(0,0,0,0.4)); border-radius: 8px; color: #cfe6ff; font-size: 13px; }
 #asteroidSelect::-webkit-scrollbar { width: 8px; }
@@ -143,6 +147,19 @@ canvas { display:block; }
 /* Make Load More match Fetch: white bg with dark text */
 #ui button#loadMore { background: #ffffff; color: #0a0a0a; border-radius: 8px; padding: 12px; font-weight: 700; border: 1px solid rgba(0,0,0,0.08); box-shadow: 0 6px 16px rgba(0,0,0,0.12); }
 #ui button#loadMore:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(0,0,0,0.14); }
+
+/* Specific action button colors requested by user */
+/* Blue: Enable Realistic Physics */
+#ui button#toggleRealism { background: linear-gradient(180deg, #6fb0ff, #1e6fff); color: #071633; border-radius: 8px; padding: 10px; font-weight: 700; border: 1px solid rgba(80,140,255,0.18); box-shadow: 0 8px 20px rgba(40,90,200,0.12); }
+#ui button#toggleRealism:hover { transform: translateY(-1px); box-shadow: 0 12px 26px rgba(30,80,200,0.18); }
+
+/* Yellow: Load High-Res Earth Texture */
+#ui button#highResTex { background: linear-gradient(180deg, #fff39a, #ffd700); color: #2e2100; border-radius: 8px; padding: 10px; font-weight: 700; border: 1px solid rgba(220,190,50,0.18); box-shadow: 0 8px 20px rgba(200,160,40,0.08); }
+#ui button#highResTex:hover { transform: translateY(-1px); box-shadow: 0 12px 26px rgba(200,160,40,0.18); }
+
+/* Orange: Spawn Selected Asteroid */
+#ui button#spawnAsteroid { background: linear-gradient(180deg, #ffb76b, #ff8a2b); color: #2b0b00; border-radius: 8px; padding: 10px; font-weight: 700; border: 1px solid rgba(255,160,80,0.22); box-shadow: 0 8px 20px rgba(255,120,40,0.12); }
+#ui button#spawnAsteroid:hover { transform: translateY(-1px); box-shadow: 0 12px 26px rgba(255,120,40,0.18); }
 
 /* API key input: grey background; when user types (not placeholder shown) use neon text effect */
 /* API key input - always show neon styling (no click required). When empty show placeholder color but still keep subtle neon tint */

@@ -45,8 +45,15 @@
   <label>Physics</label>
   <button id="toggleRealism">Enable Realistic Physics</button>
   <button id="highResTex">Load High-res Earth Texture</button>
-  <label style="margin-top:6px;display:block;font-weight:normal">Or upload a local Earth texture:</label>
-  <input type="file" id="uploadTex" accept="image/*" autocomplete="off">
+  <label style="margin-top:6px;display:block;font-weight:normal">Upload a local Earth texture:</label>
+  <!-- Hidden native file input; we trigger it from the stacked buttons below -->
+  <input type="file" id="uploadTex" accept="image/*" autocomplete="off" style="display:none">
+
+  <!-- Two stacked buttons visually merged: top (brown) label, bottom (beige) opens file picker -->
+  <div class="upload-stack" style="margin-top:8px;">
+    <button id="uploadStackTop" class="upload-top">Upload A Local Earth Texture</button>
+    <button id="uploadStackBottom" class="upload-bottom">Choose File...</button>
+  </div>
 
     <div id="asteroidData"></div>
   </div>

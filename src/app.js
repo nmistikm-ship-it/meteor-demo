@@ -1174,20 +1174,16 @@ class App {
   const ringInner = visualBase * 0.25;
   const ringOuter = visualBase * 1.35;
   const ringSegs = Math.max(32, Math.floor(32 + visualBase * 128));
-  // Create a smooth semicircular 'half-moon' sector using an extruded Shape so the silhouette
-  // is a filled curved semicircle (not a thin spinning ring). We'll build an outer semicircle
-  // and cut an inner semicircle as a hole, then extrude slightly to give a smooth curved plate.
+  // Create a smooth extruded ring (full circle) using an outer circle shape and an inner hole
   const outer = new THREE.Shape();
-  outer.absarc(0, 0, ringOuter, 0, Math.PI, false);
-  outer.lineTo(-ringOuter, 0);
-  outer.lineTo(-ringOuter, -0.0001); // tiny nudge to ensure shape closure
+  outer.absarc(0, 0, ringOuter, 0, Math.PI * 2, false);
   // inner hole path (counter-clockwise to subtract)
   const hole = new THREE.Path();
-  hole.absarc(0, 0, ringInner, 0, Math.PI, false);
-  // push hole into shape
+  hole.absarc(0, 0, ringInner, 0, Math.PI * 2, false);
   outer.holes.push(hole);
   // extrude to give a flat plate with a slight bevel for smoothness
-  const extrudeSettings = { depth: Math.max(0.01, ringOuter * 0.04), bevelEnabled: true, bevelThickness: Math.max(0.005, ringOuter * 0.01), bevelSize: Math.max(0.005, ringOuter * 0.01), bevelSegments: 3, steps: 1 };
+  // reduce depth so the ring is visually shorter
+  const extrudeSettings = { depth: Math.max(0.005, ringOuter * 0.015), bevelEnabled: true, bevelThickness: Math.max(0.003, ringOuter * 0.008), bevelSize: Math.max(0.003, ringOuter * 0.008), bevelSegments: 2, steps: 1 };
   const geo = new THREE.ExtrudeGeometry(outer, extrudeSettings);
     const mat = new THREE.MeshBasicMaterial({ color:0xff4400, side:THREE.DoubleSide, transparent:true, opacity:0.95, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: 1 });
     const ring = new THREE.Mesh(geo, mat);
@@ -1244,9 +1240,9 @@ class App {
       const cloudBase = visualBase; // base radius for the cap
       const mushroom = new THREE.Group();
 
-      // stem (short and stubby relative to cloudBase)
-      const stemRadius = cloudBase * 0.22;
-      const stemHeight = cloudBase * 0.9;
+  // stem (short and stubby relative to cloudBase) — increase size for thicker/taller stem
+  const stemRadius = cloudBase * 0.35;
+  const stemHeight = cloudBase * 1.4;
       const stemGeo = new THREE.CylinderGeometry(Math.max(0.001, stemRadius*0.5), stemRadius, Math.max(0.01, stemHeight), 16, 1);
       const stemMat = new THREE.MeshStandardMaterial({ color:0x333022, roughness:0.95, metalness:0.0, transparent:true, opacity:0.9, depthWrite:false });
       const stem = new THREE.Mesh(stemGeo, stemMat);
@@ -1257,38 +1253,37 @@ class App {
   const capMat = new THREE.MeshStandardMaterial({ color:0xCCAA88, roughness:0.92, metalness:0.0, transparent:true, opacity:0.96, depthWrite:false });
   // blended core (slightly flattened, higher-res) to make silhouette cohesive
   const core = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), capMat.clone());
-  core.scale.set(cloudBase*1.05, cloudBase*0.65, cloudBase*1.05);
+  core.scale.set(cloudBase*1.35, cloudBase*0.85, cloudBase*1.35);
   core.position.set(0, stemHeight*0.9 + cloudBase*0.05, 0);
   mushroom.add(core);
 
   const capMain = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 20), capMat.clone());
-  capMain.scale.set(cloudBase*0.9, cloudBase*0.55, cloudBase*0.9);
+  capMain.scale.set(cloudBase*1.2, cloudBase*0.75, cloudBase*1.2);
   capMain.position.set(0, stemHeight*0.9 + cloudBase*0.05, 0);
   mushroom.add(capMain);
 
-      // side fluffs
-      // place fluffs tightly around the core with smaller sizes so they don't protrude too much
-      const fluffCount = Math.max(4, Math.floor(4 + cloudBase * 2));
+      // side fluffs — larger and more numerous for a thicker cap
+      const fluffCount = Math.max(6, Math.floor(6 + cloudBase * 3));
       for(let i=0;i<fluffCount;i++){
-        const a = (i / fluffCount) * Math.PI * 2 + (Math.random()*0.12-0.06);
-        const r = cloudBase * (0.18 + Math.random()*0.18); // tighter radial offsets
+        const a = (i / fluffCount) * Math.PI * 2 + (Math.random()*0.24-0.12);
+        const r = cloudBase * (0.28 + Math.random()*0.32); // larger radial offsets
         const x = Math.cos(a) * r;
         const z = Math.sin(a) * r;
-        const y = stemHeight*0.9 + cloudBase*0.05 + (Math.random()*0.08-0.03);
-        const s = cloudBase * (0.22 + Math.random()*0.25); // smaller fluffs
+        const y = stemHeight*0.95 + cloudBase*0.08 + (Math.random()*0.14-0.07);
+        const s = cloudBase * (0.38 + Math.random()*0.42); // larger fluffs
         const fluff = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12), capMat.clone());
-        fluff.scale.set(s, s*0.65, s);
+        fluff.scale.set(s, s*0.75, s);
         fluff.position.set(x, y, z);
-        fluff.rotation.set(Math.random()*0.15, Math.random()*Math.PI, Math.random()*0.15);
+        fluff.rotation.set(Math.random()*0.25, Math.random()*Math.PI, Math.random()*0.25);
         mushroom.add(fluff);
       }
 
       // a few smaller top fluffs for a rounded crown
-      for(let j=0;j<3;j++){
-        const s = cloudBase * (0.20 + Math.random()*0.22);
+      for(let j=0;j<4;j++){
+        const s = cloudBase * (0.30 + Math.random()*0.32);
         const fluff = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12), capMat.clone());
-        fluff.scale.set(s, s*0.55, s);
-        fluff.position.set((Math.random()-0.5)*cloudBase*0.12, stemHeight*0.9 + cloudBase*0.16 + Math.random()*cloudBase*0.04, (Math.random()-0.5)*cloudBase*0.12);
+        fluff.scale.set(s, s*0.65, s);
+        fluff.position.set((Math.random()-0.5)*cloudBase*0.18, stemHeight*0.95 + cloudBase*0.22 + Math.random()*cloudBase*0.06, (Math.random()-0.5)*cloudBase*0.18);
         mushroom.add(fluff);
       }
 
@@ -1297,7 +1292,7 @@ class App {
       mushroom.position.copy(surfacePos);
       const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), normal.clone());
       mushroom.quaternion.copy(q);
-  mushroom.scale.setScalar(0.85);
+  mushroom.scale.setScalar(1.05);
       this.scene.add(mushroom);
 
       // Ensure each mushroom material stores a base opacity so we can set a deterministic fade
@@ -1311,15 +1306,15 @@ class App {
         }
       });
 
-      // store animation params
-      effect.mushroomGroup = mushroom;
-      // make mushroom slow and longer lived; store a rise speed and a maximum lift above the surface
-      effect.mushroomLife = 4.0 + Math.min(10.0, visualBase * 6.0); // larger clouds live longer
-      // rise speed (scene units per second) - small and proportional to visualBase, tuned for subtlety
-      effect.mushroomRiseSpeed = Math.max(0.00005, visualBase * 0.02);
-      // maximum lift above the sphere surface (scene units) so mushroom never 'launches' to space
-      effect.mushroomMaxLift = Math.max(0.01, visualBase * 0.45);
-      effect.mushroomBaseScale = cloudBase;
+  // store animation params
+  effect.mushroomGroup = mushroom;
+  // make mushroom longer lived; store a faster rise speed and a larger maximum lift
+  effect.mushroomLife = 6.0 + Math.min(14.0, visualBase * 8.0); // larger clouds live longer
+  // rise speed (scene units per second) - increased to make the mushroom appear taller quicker
+  effect.mushroomRiseSpeed = Math.max(0.0001, visualBase * 0.035);
+  // maximum lift above the sphere surface (scene units) so mushroom rises taller
+  effect.mushroomMaxLift = Math.max(0.02, visualBase * 0.7);
+  effect.mushroomBaseScale = cloudBase * 1.1;
     }catch(e){ console.warn('mushroom creation failed', e); }
 
     this.impactEffects.push(effect);
@@ -1357,6 +1352,8 @@ class App {
             const item = document.createElement('div'); item.className = 'item'; item.dataset.id = a.id;
             const txt = document.createElement('div'); txt.className = 'label-text'; txt.innerText = `${a.name} (${a.estimated_diameter.meters.estimated_diameter_max.toFixed(0)} m)`;
             item.appendChild(txt);
+            // horizontal neon separator between items
+            const sep = document.createElement('div'); sep.className = 'neon-sep-horizontal'; item.appendChild(sep);
             // click selects the item; highlight by toggling 'selected'
             item.addEventListener('click', (ev)=>{
               // clear prior selection
