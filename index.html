@@ -8,15 +8,15 @@
 <body>
   <div id="ui">
     <label>Simulation Speed:</label>
-    <input type="range" id="simSpeed" min="0.01" max="5" step="0.01" value="1">
+  <input type="range" id="simSpeed" min="0.01" max="10.0" step="0.01" value="1">
     <div class="small">x <span id="simSpeedVal">1.00</span></div>
 
     <label>Meteor Speed</label>
-    <input type="range" id="speed" min="0.01" max="0.2" step="0.01" value="0.05">
+  <input type="range" id="speed" min="0.01" max="0.25" step="0.01" value="0.05">
     <div class="small">v <span id="speedVal">0.05</span></div>
 
   <label>Meteor Size (m)</label>
-  <input type="range" id="meteorSize" min="0.1" max="50" step="0.1" value="0.5">
+  <input type="range" id="meteorSize" min="0.1" max="100.0" step="0.1" value="0.5">
   <div class="small">d <span id="meteorSizeVal">0.5</span> m</div>
 
     <div class="button-row">
@@ -38,7 +38,8 @@
   <button id="loadMore">Load More Asteroids</button>
 
     <label>Select Asteroid:</label>
-    <select id="asteroidSelect"></select>
+  <!-- custom list container (replaces native select for consistent styling) -->
+  <div id="asteroidSelect" role="listbox" tabindex="0" class="custom-list" aria-label="Asteroid list"></div>
     <button id="spawnAsteroid">Spawn Selected Asteroid</button>
 
   <label>Physics</label>

@@ -30,11 +30,71 @@ canvas { display:block; }
 #ui button { background: linear-gradient(180deg, rgba(20,40,80,0.9), rgba(8,12,28,0.95)); color: #dfefff; cursor: pointer; font-weight: 700; border-radius: 10px; padding: 10px; border: 1px solid rgba(90,140,255,0.12); box-shadow: 0 6px 18px rgba(20,40,80,0.6), inset 0 1px 0 rgba(255,255,255,0.02); }
 #ui button:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(20,40,80,0.65), inset 0 1px 0 rgba(255,255,255,0.02); }
 
+/* Custom range (slider) styling to match the provided reference */
+#ui input[type="range"] { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; padding: 0; --pct: 0%; --fill: #73ffd6; --thumb-w: 22px; --cap-x: calc(var(--thumb-w) / 2); --cap-r: calc(var(--thumb-w) * 0.95); }
+#ui input[type="range"]:focus { outline: none; }
+
+/* Track */
+#ui input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 10px; cursor: pointer; background: linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03)); border-radius: 999px; border: 1px solid rgba(255,255,255,0.04); box-shadow: inset 0 1px 0 rgba(255,255,255,0.02); }
+#ui input[type="range"]::-moz-range-track { width: 100%; height: 10px; cursor: pointer; background: linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03)); border-radius: 999px; border: 1px solid rgba(255,255,255,0.04); }
+
+/* Filled portion (built from CSS variables: --fill, --pct) */
+#ui input[type="range"]::-webkit-slider-runnable-track {
+  /* semicap uses variables so JS can tune center/radius for different DPI/zoom */
+  background: radial-gradient(circle at var(--cap-x, calc(var(--thumb-w) / 2)) 50%, var(--fill) 0 calc(var(--cap-r, calc(var(--thumb-w) * 0.95))), rgba(0,0,0,0) calc(calc(var(--cap-r, calc(var(--thumb-w) * 0.95)) + 1px))),
+              linear-gradient(90deg, var(--fill) var(--pct), rgba(255,255,255,0.04) var(--pct));
+}
+#ui input[type="range"]::-moz-range-track {
+  background: radial-gradient(circle at var(--cap-x, calc(var(--thumb-w) / 2)) 50%, var(--fill) 0 calc(var(--cap-r, calc(var(--thumb-w) * 0.95))), rgba(0,0,0,0) calc(calc(var(--cap-r, calc(var(--thumb-w) * 0.95)) + 1px))),
+              linear-gradient(90deg, var(--fill) var(--pct), rgba(255,255,255,0.04) var(--pct));
+}
+/* Fallback on the input element itself for browsers that don't apply pseudo-element backgrounds */
+#ui input[type="range"] { background: radial-gradient(circle at var(--cap-x, calc(var(--thumb-w) / 2)) 50%, var(--fill) 0 calc(var(--cap-r, calc(var(--thumb-w) * 0.95))), rgba(0,0,0,0) calc(calc(var(--cap-r, calc(var(--thumb-w) * 0.95)) + 1px))), linear-gradient(90deg, var(--fill) var(--pct), rgba(255,255,255,0.04) var(--pct)); }
+/* Custom pill-with-right-semicircle thumb: rectangle with rounded left and right semicircle on the right */
+#ui input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; margin-top: -6px; width: 42px; height: 22px; border-radius: 11px; background:
+    /* base rounded rect */
+    linear-gradient(180deg, var(--fill), color-mix(in srgb, var(--fill) 60%, #02c39a 40%));
+  border: 2px solid rgba(0,0,0,0.12); box-shadow: 0 6px 14px rgba(0,0,0,0.35); cursor: pointer; position: relative; }
+/* Create right semicircle overlay using ::after on the thumb is not possible, but we can fake it with background-positioning and a circular background stop in newer browsers. Provide a graceful fallback to a rounded pill in others. */
+#ui input[type="range"]::-moz-range-thumb { width: 42px; height: 22px; border-radius: 11px; background: linear-gradient(180deg, var(--fill), color-mix(in srgb, var(--fill) 60%, #02c39a 40%)); border: 2px solid rgba(0,0,0,0.12); box-shadow: 0 6px 14px rgba(0,0,0,0.35); cursor: pointer; }
+
+/* smaller thumb for compact UI variants */
+#ui input[type="range"].small-thumb::-webkit-slider-thumb { width: 18px; height: 18px; }
+
+
 /* accent buttons (fire) use a warm nebula color */
 .button-row button#fire { background: linear-gradient(180deg, #ffb76b, #ff8a2b); color: #2b0b00; border: 1px solid rgba(255,160,80,0.22); box-shadow: 0 8px 20px rgba(255,120,40,0.12); }
 
+/* Reset (blue) */
+.button-row button#reset { background: linear-gradient(180deg, #6fb0ff, #1e6fff); color: #071633; border: 1px solid rgba(80,140,255,0.18); box-shadow: 0 8px 20px rgba(40,90,200,0.12); }
+
+/* Pause (red) and Resume (green) states for the same button */
+.button-row button#pause.pause { background: linear-gradient(180deg, #ff8a8a, #d9534f); color: #fff; border: 1px solid rgba(220,80,80,0.2); box-shadow: 0 8px 20px rgba(200,40,40,0.12); }
+.button-row button#pause.resume { background: linear-gradient(180deg, #9ff7a8, #2fb845); color: #053005; border: 1px solid rgba(60,200,100,0.18); box-shadow: 0 8px 20px rgba(20,120,40,0.08); }
+
+/* Hide Aiming (yellow) and Show Aiming (purple) states */
+.button-row button#toggleAiming.aim-hide { background: linear-gradient(180deg, #fff39a, #ffd700); color: #2e2100; border: 1px solid rgba(220,190,50,0.18); box-shadow: 0 8px 20px rgba(200,160,40,0.08); }
+.button-row button#toggleAiming.aim-show { background: linear-gradient(180deg, #caa6ff, #7a3fff); color: #ffffff; border: 1px solid rgba(150,90,255,0.18); box-shadow: 0 8px 20px rgba(100,50,220,0.08); }
+
+
 /* subtle glyph style for selects */
 #ui select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.25) 50%), linear-gradient(135deg, rgba(255,255,255,0.25) 50%, transparent 50%); background-position: calc(100% - 20px) calc(1em + 2px), calc(100% - 15px) calc(1em + 2px); background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-right: 36px; }
+/* Dark themed asteroid list */
+/* custom list for asteroids (replaces native select for consistent styling) */
+#asteroidSelect.custom-list { background: linear-gradient(180deg, rgba(10,12,16,0.95), rgba(8,10,12,0.9)); color: #cfe6ff; border: 1px solid rgba(255,255,255,0.03); padding: 6px; border-radius: 8px; height: 160px; overflow-y: auto; display:flex; flex-direction:column; gap:6px; }
+.custom-list .item { position: relative; padding: 8px 12px; background: transparent; color: rgba(223,239,255,0.95); font-weight: 700; font-size: 12px; border-radius: 6px; cursor: pointer; display:flex; align-items:center; justify-content:space-between; }
+.custom-list .item:hover { background: rgba(255,255,255,0.02); }
+.custom-list .item.selected { background: rgba(10,100,220,0.95); color: #fff; }
+/* Neon red separators left and right of each item using the provided neon image file 'neon-sep.png' (project root) */
+.custom-list .item:before, .custom-list .item:after { content: ''; position: absolute; top: 6px; bottom: 6px; width: 10px; background-image: url('neon-sep.png'); background-repeat: repeat-y; background-size: 12px 100%; opacity: 0.95; filter: drop-shadow(0 2px 6px rgba(255,40,10,0.6)); }
+.custom-list .item:before { left: 6px; }
+.custom-list .item:after { right: 6px; transform: scaleX(-1); }
+/* ensure text doesn't overlap the neon edges */
+.custom-list .item .label-text { margin: 0 14px; flex:1; text-align:left; }
+/* Selected row look for native select varies by browser; provide a separate visible `#asteroidData` info bar to mirror the screenshot */
+#asteroidData { margin-top: 8px; padding: 8px; background: linear-gradient(180deg, rgba(0,0,0,0.55), rgba(0,0,0,0.4)); border-radius: 8px; color: #cfe6ff; font-size: 13px; }
+#asteroidSelect::-webkit-scrollbar { width: 8px; }
+#asteroidSelect::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.3); border-radius: 6px; }
 
 .small { font-size: 12px; color: #b9cfe6; margin-bottom: 8px; }
 .button-row { display:flex; gap:8px; }
@@ -45,10 +105,52 @@ canvas { display:block; }
 .hud-outline { box-shadow: 0 0 0 1px rgba(60,200,255,0.06) inset, 0 8px 24px rgba(10,20,40,0.6); border-radius: 10px; }
 .hud-badge { position: absolute; right: 12px; top: 10px; width: 42px; height: 42px; border-radius: 50%; background: linear-gradient(180deg, rgba(20,40,80,0.7), rgba(10,16,32,0.9)); border: 1px solid rgba(50,200,255,0.14); box-shadow: 0 6px 20px rgba(50,200,255,0.06), inset 0 1px 0 rgba(255,255,255,0.02); display:flex; align-items:center; justify-content:center; color:#9fe6ff; font-weight:700; font-size:12px; }
 
+/* Nudge small green HUD badge up slightly to better center visually */
+.hud-badge { top: 6px; }
+
+/* Theme-specific slider thumbs and button accents */
+/* Simulation speed: pink theme */
+/* per-slider base fill variable (JS will set --fill and --pct) */
+#ui input[type="range"]#simSpeed { --fill: #ff8ac9; }
+#ui input[type="range"]#simSpeed::-webkit-slider-thumb { background: linear-gradient(180deg, #ffb1e6, #ff73c9); }
+#ui input[type="range"]#simSpeed::-moz-range-thumb { background: linear-gradient(180deg, #ffb1e6, #ff73c9); }
+
+/* Meteor speed: lilac theme */
+#ui input[type="range"]#speed { --fill: #c49cff; }
+#ui input[type="range"]#speed::-webkit-slider-thumb { background: linear-gradient(180deg, #e6d0ff, #b88cff); }
+#ui input[type="range"]#speed::-moz-range-thumb { background: linear-gradient(180deg, #e6d0ff, #b88cff); }
+
+/* Meteor size: cyan theme */
+#ui input[type="range"]#meteorSize { --fill: #64f0ec; }
+#ui input[type="range"]#meteorSize::-webkit-slider-thumb { background: linear-gradient(180deg, #9ff7f0, #32d6d0); }
+#ui input[type="range"]#meteorSize::-moz-range-thumb { background: linear-gradient(180deg, #9ff7f0, #32d6d0); }
+/* Note: button color states for pause/toggleAiming are defined earlier; thumb colors above provide the slider themes. */
+
 /* small glyph inside badge (simple ring) */
 .hud-badge:before{ content:''; width:18px; height:18px; border-radius:50%; border:2px solid rgba(90,220,255,0.18); display:block; }
 
 .label { position: absolute; pointer-events: none; font-size:12px; padding:4px 8px; background: rgba(0,0,0,0.6); border-radius:6px; border: 1px solid rgba(255,255,255,0.03); color: #fff; transform: translate(-50%, -140%); white-space: nowrap; }
+.label.hidden { display:none !important; }
+
+/* Button theme classes to match slider color schemes */
+.theme-pink { background: linear-gradient(180deg, #ffd7f2, #ff8ac9); color: #2b0030; border: 1px solid rgba(255,120,200,0.18); box-shadow: 0 8px 20px rgba(220,80,150,0.08); }
+.theme-lilac { background: linear-gradient(180deg, #efe6ff, #c49cff); color: #1b0033; border: 1px solid rgba(150,110,255,0.16); box-shadow: 0 8px 20px rgba(130,80,200,0.06); }
+.theme-cyan { background: linear-gradient(180deg, #cffffb, #32d6d0); color: #002a27; border: 1px solid rgba(50,220,200,0.16); box-shadow: 0 8px 20px rgba(40,160,140,0.06); }
+
+/* Fetch / LoadMore button special styles */
+#ui button#fetch { background: #ffffff; color: #0a0a0a; border-radius: 8px; padding: 12px; font-weight: 700; border: 1px solid rgba(0,0,0,0.08); box-shadow: 0 6px 16px rgba(0,0,0,0.12); }
+#ui button#fetch:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(0,0,0,0.14); }
+/* Make Load More match Fetch: white bg with dark text */
+#ui button#loadMore { background: #ffffff; color: #0a0a0a; border-radius: 8px; padding: 12px; font-weight: 700; border: 1px solid rgba(0,0,0,0.08); box-shadow: 0 6px 16px rgba(0,0,0,0.12); }
+#ui button#loadMore:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(0,0,0,0.14); }
+
+/* API key input: grey background; when user types (not placeholder shown) use neon text effect */
+/* API key input - always show neon styling (no click required). When empty show placeholder color but still keep subtle neon tint */
+/* phosphorescent neon green, less blur and same style on focus */
+#apiKey { background: #2f2f2f; color: #7CFF3D; -webkit-text-fill-color: #7CFF3D; border-radius: 8px; padding: 10px 10px 10px 14px; border: 1px solid rgba(255,255,255,0.03); font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; text-shadow: 0 0 4px rgba(124,255,61,0.9), 0 0 10px rgba(124,255,61,0.25); font-weight:700; line-height:20px; box-sizing: border-box; }
+#apiKey::placeholder { color: rgba(255,255,255,0.16); }
+/* ensure focus doesn't switch to a different color or outline */
+#apiKey:focus, #apiKey:active { color: #7CFF3D; -webkit-text-fill-color: #7CFF3D; text-shadow: 0 0 4px rgba(124,255,61,0.9), 0 0 10px rgba(124,255,61,0.25); outline: none; }
 
 /* Hide the visible scrollbar but keep the UI area scrollable */
 #ui::-webkit-scrollbar { width: 0px; height: 0px; }

@@ -185,32 +185,120 @@ class App {
         uiRoot.classList.add('hud-outline');
       }
     }catch(e){}
-    if (el('simSpeed')) el('simSpeed').oninput = (e) => { this.simSpeed = parseFloat(e.target.value); if (el('simSpeedVal')) el('simSpeedVal').innerText = parseFloat(e.target.value).toFixed(2); };
-    if (el('speed')) { const s = el('speed'); if (el('speedVal')) el('speedVal').innerText = s.value; s.oninput = (e) => { if (el('speedVal')) el('speedVal').innerText = parseFloat(e.target.value).toFixed(2); }; }
-    if (el('reset')) el('reset').onclick = () => this.resetScene();
-    if (el('pause')) el('pause').onclick = (e) => { this.paused = !this.paused; e.target.innerText = this.paused ? 'Resume' : 'Pause'; };
-    if (el('toggleAiming')) el('toggleAiming').onclick = (e) => {
-      this.showAiming = !this.showAiming;
-      e.target.innerText = this.showAiming ? 'Hide Aiming' : 'Show Aiming';
-      const aim = this.scene.getObjectByName('aimingLine'); if (aim) aim.visible = this.showAiming;
-      // update HTML overlay and native cursor only when pointer is over canvas
-      if(this._pointerOverCanvas){
-        if(this.showAiming){ this.aimCursor.style.display = 'block'; this.renderer.domElement.style.cursor = 'none'; }
-        else { this.aimCursor.style.display = 'none'; this.renderer.domElement.style.cursor = ''; }
+    // slider fill helper: layered gradients. At very low pct we draw a semicircular radial cap
+    // on the left so the filled area meets the rounded track shape instead of leaving a square gap.
+    const setRangeFill = (input) => {
+      if(!input) return;
+      const min = parseFloat(input.min || 0);
+      const max = parseFloat(input.max || 1);
+      const val = parseFloat(input.value || 0);
+      const pct = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+  // set CSS variables that the stylesheet consumes. Also explicitly set --fill from JS
+  // so we don't rely on stylesheet-only definitions in case of specificity/cascade issues.
+  const defaultFill = (input.id==='simSpeed'?'#ff8ac9':(input.id==='speed'?'#c49cff':'#64f0ec'));
+  const fill = (getComputedStyle(input).getPropertyValue('--fill') || defaultFill).trim() || defaultFill;
+  input.style.setProperty('--fill', fill);
+  input.style.setProperty('--pct', `${pct}%`);
+  // Tune cap size and center to device pixel ratio to avoid visible gaps on HiDPI/zoomed displays
+  const dpr = (window.devicePixelRatio && window.devicePixelRatio > 1) ? window.devicePixelRatio : 1;
+  // Set a DPR-scaled thumb width so CSS can derive cap center/radius from it
+  const baseThumb = 22; // default thumb width in CSS
+  const thumbW = Math.max(16, Math.round(baseThumb * dpr));
+  input.style.setProperty('--thumb-w', `${thumbW}px`);
+      const rightColor = 'rgba(255,255,255,0.04)';
+      // Use a more generous semicap for low pct values to account for browser track rendering and HiDPI
+      if(pct <= 18){
+        // when we set CSS vars, the stylesheet will use them; still provide an inline fallback scaled to dpr
+        const capCenter = `${Math.round(thumbW/2)}px`; const capRadius = `${Math.round(thumbW * 0.95)}px`;
+        input.style.background = `radial-gradient(circle at ${capCenter} 50%, ${fill} 0px, ${fill} ${capRadius}, transparent calc(${capRadius} + 1px)), linear-gradient(90deg, ${fill} ${pct}%, ${rightColor} ${pct}%)`;
+      } else {
+        input.style.background = `linear-gradient(90deg, ${fill} ${pct}%, ${rightColor} ${pct}%)`;
       }
     };
+
+    if (el('simSpeed')) {
+      const sim = el('simSpeed');
+      const onSim = (e) => { this.simSpeed = parseFloat(e.target.value); if (el('simSpeedVal')) el('simSpeedVal').innerText = parseFloat(e.target.value).toFixed(2); setRangeFill(sim); };
+      sim.addEventListener('input', onSim);
+      // theme class for the simSpeed button area (pink)
+      if (el('reset')) el('reset').classList.add('theme-pink');
+      setRangeFill(sim);
+    }
+    if (el('speed')) {
+      const s = el('speed'); if (el('speedVal')) el('speedVal').innerText = s.value;
+      const onSpeed = (e) => { if (el('speedVal')) el('speedVal').innerText = parseFloat(e.target.value).toFixed(2); setRangeFill(s); };
+      s.addEventListener('input', onSpeed);
+      if (el('pause')) el('pause').classList.add('theme-lilac');
+      setRangeFill(s);
+    }
+    if (el('reset')) el('reset').onclick = () => this.resetScene();
+    // ensure reset has blue style
+    if (el('reset')) el('reset').classList.add('reset');
+
+    // Pause button toggles between Pause (red) and Resume (green)
+    if (el('pause')){
+      const pauseBtn = el('pause');
+      // set initial class (not paused => show "Pause")
+      pauseBtn.classList.add('pause');
+      pauseBtn.onclick = (e) => {
+        this.paused = !this.paused;
+        const isPaused = this.paused;
+        e.target.innerText = isPaused ? 'Resume' : 'Pause';
+        // update class to reflect state
+        pauseBtn.classList.toggle('pause', !isPaused);
+        pauseBtn.classList.toggle('resume', isPaused);
+      };
+    }
+
+    // toggleAiming shows/hides aiming and switches styles between aim-hide (yellow) and aim-show (purple)
+    if (el('toggleAiming')){
+      const ta = el('toggleAiming');
+      // assume default text in HTML is "Hide Aiming" so initial state is showing aiming
+      this.showAiming = true;
+      ta.classList.add('aim-hide');
+      ta.onclick = (e) => {
+        this.showAiming = !this.showAiming;
+        const showing = this.showAiming;
+        e.target.innerText = showing ? 'Hide Aiming' : 'Show Aiming';
+        // update aiming line visibility
+        const aim = this.scene.getObjectByName('aimingLine'); if (aim) aim.visible = showing;
+        // update HTML overlay and native cursor only when pointer is over canvas
+        if(this._pointerOverCanvas){
+          if(showing){ this.aimCursor.style.display = 'block'; this.renderer.domElement.style.cursor = 'none'; }
+          else { this.aimCursor.style.display = 'none'; this.renderer.domElement.style.cursor = ''; }
+        }
+        // update classes
+        ta.classList.toggle('aim-hide', showing);
+        ta.classList.toggle('aim-show', !showing);
+      };
+    }
   if (el('fire')){
     // prevent the button from receiving focus (which causes the UI to scroll)
     el('fire').onmousedown = (e) => { e.preventDefault(); };
     el('fire').onclick = (e) => { this.shootMeteor(); try{ e.currentTarget && e.currentTarget.blur && e.currentTarget.blur(); }catch(_){} };
   }
   // wire meteor size UI
-  const ms = el('meteorSize'); if(ms){ const mv = el('meteorSizeVal'); mv.innerText = ms.value; ms.oninput = (e)=>{ if(mv) mv.innerText = parseFloat(e.target.value).toFixed(1); }; }
-    if (el('loadMore')) el('loadMore').onclick = () => this.fetchAsteroidList(true);
+  const ms = el('meteorSize'); if(ms){ const mv = el('meteorSizeVal'); mv.innerText = ms.value; const onMs = (e)=>{ if(mv) mv.innerText = parseFloat(e.target.value).toFixed(1); setRangeFill(ms); }; ms.addEventListener('input', onMs); if (el('toggleAiming')) el('toggleAiming').classList.add('theme-cyan'); setRangeFill(ms); }
+
+    // debug overlay removed
+  if (el('fetch')) el('fetch').onclick = () => this.fetchAsteroidList(false);
+  if (el('loadMore')) el('loadMore').onclick = () => this.fetchAsteroidList(true);
     if (el('highResTex')) el('highResTex').onclick = () => this.loadHighResEarthTexture();
     const uploadInput = el('uploadTex');
     if (uploadInput) uploadInput.addEventListener('change', (ev) => this.onUploadTexture(ev));
     const realBtn = el('toggleRealism'); if(realBtn) realBtn.onclick = (e)=>{ this.realistic = !this.realistic; e.target.innerText = this.realistic? 'Disable Realistic Physics' : 'Enable Realistic Physics'; };
+
+    // When the API key input is focused we should not allow firing via keyboard and
+    // we should temporarily disable the spawn button to avoid accidental spawn while typing.
+    const apiEl = el('apiKey');
+    const spawnBtn = el('spawnAsteroid');
+    if(apiEl){
+      apiEl.addEventListener('focus', ()=>{ if(spawnBtn) spawnBtn.disabled = true; });
+      apiEl.addEventListener('blur', ()=>{ if(spawnBtn) spawnBtn.disabled = false; });
+      // also ensure placeholder-shown neon style toggles by updating class on input
+      apiEl.addEventListener('input', (e)=>{ /* no-op; CSS :placeholder-shown handles visual */ });
+    }
+    if(spawnBtn) spawnBtn.onclick = () => this.spawnSelectedAsteroid();
 
     // ensure when hovering UI we show default cursor and hide the aim overlay
     const uiRoot = document.getElementById('ui');
@@ -320,7 +408,20 @@ class App {
       }
   }
 
-  onKeyDown(event) { if(event.code === 'KeyF') this.shootMeteor(); }
+  onKeyDown(event) {
+    // Ignore key events if an input, textarea, or contenteditable element is focused
+    const active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+    if(event.code === 'KeyF') this.shootMeteor();
+    // 'G' shortcut: spawn selected asteroid (respect focus guards)
+    if(event.code === 'KeyG'){
+      const sel = document.getElementById('asteroidSelect');
+      // if custom-list used, check dataset.selectedId, otherwise fall back to select.value
+      const hasSelected = sel && ((sel.dataset && sel.dataset.selectedId) || sel.value);
+      if(!hasSelected) return;
+      this.spawnSelectedAsteroid();
+    }
+  }
 
   shootMeteor() {
     const speedEl = document.getElementById('speed');
@@ -393,7 +494,13 @@ class App {
     const rng = makeRNG(seed || (Math.floor(Math.random()*0xffffffff)>>>0));
 
     const loader = new THREE.TextureLoader();
-    loader.load('meteor_texture.jpg', (tex)=>{
+      // Apply a quick low-res procedural fallback immediately so the meteor is textured on spawn
+      try{
+        const quickFallback = this.createProceduralMeteorTexture(128);
+        mat.map = quickFallback; mat.needsUpdate = true;
+      }catch(e){ /* ignore fallback errors */ }
+
+      loader.load('meteor_texture.jpg', (tex)=>{
       try{
         const img = tex.image;
         // helper to apply crater-like inward domes by sampling the image at each vertex UV
@@ -717,28 +824,48 @@ class App {
       mat.map = ctex; mat.needsUpdate = true;
     });
 
-  // Map meteor diameter (meters) to a visual radius using a wide dynamic-range mapping
-  // Endpoints: 0.1 m -> Andorra (very small), 25 m -> Montenegro (medium), 50 m -> Slovenia (large)
-  const MIN_MET = 0.1, MAX_MET = 50.0;
-  // Representative country areas (km^2) for visual anchors
-  const AREA_ANDORRA = 468;    // Andorra ~468 km^2 (tiny)
-  const AREA_MONTENEGRO = 13812; // Montenegro ~13.8k km^2 (medium)
-  const AREA_SLOVENIA = 20273; // Slovenia ~20.3k km^2 (large)
-  const radiusAndorra = Math.sqrt(AREA_ANDORRA / Math.PI) / 1000.0;
-  const radiusMontenegro = Math.sqrt(AREA_MONTENEGRO / Math.PI) / 1000.0;
-  const radiusSlovenia = Math.sqrt(AREA_SLOVENIA / Math.PI) / 1000.0;
-  // normalize input size (0..1)
-  const tRaw = (sizeMeters - MIN_MET) / (MAX_MET - MIN_MET);
-  const t = Math.max(0, Math.min(1, tRaw));
-  // bias growth so mid values map near Montenegro and larger values approach Slovenia
-  const gamma = 1.6;
-  const tAdj = Math.pow(t, gamma);
-  // interpolate between Andorra and Slovenia (Montenegro sits mid-range)
-  const visualRadiusBase = radiusAndorra + (radiusSlovenia - radiusAndorra) * tAdj;
-  // optional visual amplifier, smaller now that endpoints are closer
-  const VISUAL_AMPLIFIER = 1.2;
+  // Extended mapping: map meteor diameter (meters) to a visual radius using multiple
+  // country-area anchors so very large diameters (10km, 40km, 80km) map to large
+  // country-sized visuals (Pakistan, Saudi Arabia, China). We use piecewise eased
+  // interpolation to keep the mapping smooth and monotonic.
+  const anchors = [
+    { m: 0.1, area: 468 },       // Andorra (tiny)
+    { m: 75.0, area: 78866 },    // Czech Republic ~78,866 km^2
+    { m: 100.0, area: 243610 },  // United Kingdom ~243,610 km^2
+    { m: 10000.0, area: 881913 },// Pakistan ~881,913 km^2 (visual target for 10,000 m)
+    { m: 40000.0, area: 2149690 },// Saudi Arabia ~2,149,690 km^2 (visual target for 40,000 m)
+    { m: 80000.0, area: 9596961 } // China ~9,596,961 km^2 (visual target for 80,000 m)
+  ];
+
+  // compute anchor visual radii (km -> normalized by 1000 to keep scene scale consistent)
+  const anchorRadii = anchors.map(a => Math.sqrt(a.area / Math.PI) / 1000.0);
+
+  // clamp and find segment
+  const minM = anchors[0].m, maxM = anchors[anchors.length-1].m;
+  const m = Math.max(minM, Math.min(maxM, sizeMeters));
+  let visualRadiusBase = anchorRadii[0];
+  if (m <= anchors[0].m) {
+    visualRadiusBase = anchorRadii[0];
+  } else if (m >= anchors[anchors.length-1].m) {
+    visualRadiusBase = anchorRadii[anchorRadii.length-1];
+  } else {
+    // find segment index
+    let seg = 0;
+    for (let i = 0; i < anchors.length - 1; i++) {
+      if (m >= anchors[i].m && m <= anchors[i+1].m) { seg = i; break; }
+    }
+    const m0 = anchors[seg].m, m1 = anchors[seg+1].m;
+    const r0 = anchorRadii[seg], r1 = anchorRadii[seg+1];
+    const u = (m - m0) / Math.max(1e-6, (m1 - m0));
+    // segment-specific gamma to tune feel (higher -> slower early growth)
+    const gammas = [1.4, 1.05, 0.95, 0.95, 0.98];
+    const gamma = gammas[Math.min(gammas.length-1, seg)] || 1.0;
+    const uAdj = Math.pow(u, gamma);
+    visualRadiusBase = r0 + (r1 - r0) * uAdj;
+  }
+
+  const VISUAL_AMPLIFIER = 1.0;
   const visualRadius = visualRadiusBase * VISUAL_AMPLIFIER;
-  // clamp and set meteor scale (scene units)
   mesh.scale.setScalar(Math.max(visualRadius, 0.005));
 
     mesh.castShadow = false;
@@ -747,19 +874,20 @@ class App {
   }
 
   // Generate a simple procedural meteor texture as a CanvasTexture fallback
-  createProceduralMeteorTexture(){
-      const size = 1024; // increase procedural fallback resolution for sharper details
+  createProceduralMeteorTexture(size = 1024){
+      const s = Math.max(32, parseInt(size,10) || 1024);
     const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = size;
+    canvas.width = canvas.height = s;
     const ctx = canvas.getContext('2d');
     // base color
-    ctx.fillStyle = '#9a8f85'; ctx.fillRect(0,0,size,size);
-    // noisy overlay
-    const image = ctx.getImageData(0,0,size,size);
-    for(let y=0;y<size;y++){
-      for(let x=0;x<size;x++){
-        const i = (y*size + x) * 4;
-        const n = Math.floor(40 * Math.random()) - 20;
+    ctx.fillStyle = '#9a8f85'; ctx.fillRect(0,0,s,s);
+    // noisy overlay (lower amplitude for smaller sizes)
+    const image = ctx.getImageData(0,0,s,s);
+    const noiseAmp = Math.max(8, Math.floor(40 * (s/1024)));
+    for(let y=0;y<s;y++){
+      for(let x=0;x<s;x++){
+        const i = (y*s + x) * 4;
+        const n = Math.floor(noiseAmp * Math.random()) - Math.floor(noiseAmp/2);
         image.data[i] = Math.max(0, Math.min(255, image.data[i] + n));
         image.data[i+1] = Math.max(0, Math.min(255, image.data[i+1] + n));
         image.data[i+2] = Math.max(0, Math.min(255, image.data[i+2] + n));
@@ -867,15 +995,19 @@ class App {
         if(meteor.ttl <= 0){ meteor.fading = true; }
         if(meteor.fading){
           meteor.mesh.material.opacity = Math.max(0, (meteor.mesh.material.opacity||1) - 0.5 * dt);
-          if(meteor.mesh.material.opacity <= 0){ meteor.active = false; if(meteor.mesh.parent) meteor.mesh.parent.remove(meteor.mesh); if(meteor.label && meteor.label.element) meteor.label.element.remove(); }
+          if(meteor.mesh.material.opacity <= 0){
+            meteor.active = false;
+            if(meteor.mesh.parent) meteor.mesh.parent.remove(meteor.mesh);
+            try{ if(meteor.label && meteor.label.element) meteor.label.element.remove(); const li = this.labels.indexOf(meteor.label); if(li!==-1) this.labels.splice(li,1); }catch(e){ /* ignore */ }
+          }
         }
 
         if(r < this.earthRadius + 0.2){
           meteor.active = false;
           this.createImpact(pos.clone(), meteor.size);
           this.scene.remove(meteor.mesh);
-          if(meteor.label && meteor.label.element && meteor.label.element.parentNode) meteor.label.element.parentNode.removeChild(meteor.label.element);
-          const li = this.labels.indexOf(meteor.label); if(li!==-1) this.labels.splice(li,1);
+          // Remove any label associated with this meteor so nametags do not persist after impact
+          try{ if(meteor.label && meteor.label.element && meteor.label.element.parentNode) meteor.label.element.parentNode.removeChild(meteor.label.element); const li = this.labels.indexOf(meteor.label); if(li!==-1) this.labels.splice(li,1); }catch(e){ /* ignore */ }
           this.impactCount++; const ic = document.getElementById('impactCount'); if(ic) ic.innerText = String(this.impactCount);
           try{
             let speedAtImpact = meteor.physVelocity ? meteor.physVelocity.length() : (meteor.velocity ? meteor.velocity.length()*this.SCENE_SCALE : 0);
@@ -1007,41 +1139,56 @@ class App {
     // make a larger, size-dependent impact ring + mushroom
     const normal = position.clone().normalize();
 
-  // Map meteor diameter (meters) to a visual size in scene units.
-  // Invert and compress the mapping so small meteors appear relatively larger and big meteors are less gigantic.
-  // This produces the behavior you requested: small meteors' rings/mushrooms are more visible, large meteors are visually tempered.
+  // Map meteor diameter (meters) -> visual impact radius (scene units) using multi-anchor country areas.
   const sizeMeters = Math.max(0.01, size || 1);
-  // Map meteor diameter (meters) -> visual impact radius (scene units) using
-  // a smooth, non-linear interpolation so:
-  //  - very small meteors (~0.1 m) -> small impact (approx area of Ireland)
-  //  - medium meteors (~22-30 m) -> medium impact (approx area of Poland)
-  //  - very large meteors (~50 m) -> large impact (approx area of Algeria)
-  // We convert representative country areas -> equivalent circular radii (km) then to scene units
-  // (1 scene unit == 1000 km because SCENE_SCALE = 1e6 m / scene unit).
-  const MIN_MET = 0.1; // meters slider min
-  const MAX_MET = 50.0; // meters slider max
-  // Representative country areas (km^2) for visual anchors: Montenegro (small), Hungary (medium), Poland (large)
-  const AREA_MONTENEGRO = 13812; // km^2 (Montenegro)
-  const AREA_HUNGARY = 93030; // km^2 (Hungary)
-  const AREA_POLAND = 312679; // km^2 (Poland)
-  const radiusMontenegro = Math.sqrt(AREA_MONTENEGRO / Math.PI) / 1000.0;
-  const radiusHungary = Math.sqrt(AREA_HUNGARY / Math.PI) / 1000.0;
-  const radiusPoland = Math.sqrt(AREA_POLAND / Math.PI) / 1000.0;
+  const anchors = [
+    { m: 0.1, area: 468 },        // Andorra
+    { m: 75.0, area: 78866 },     // Czech
+    { m: 100.0, area: 243610 },   // UK
+    { m: 10000.0, area: 881913 }, // Pakistan (~10k m)
+    { m: 40000.0, area: 2149690 },// Saudi Arabia (~40k m)
+    { m: 80000.0, area: 9596961 } // China (~80k m)
+  ];
+  const anchorR = anchors.map(a => Math.sqrt(a.area / Math.PI) / 1000.0);
+  // clamp and find segment
+  const minM = anchors[0].m, maxM = anchors[anchors.length-1].m;
+  const m = Math.max(minM, Math.min(maxM, sizeMeters));
+  let visualBase = anchorR[0];
+  if (m <= minM) {
+    visualBase = anchorR[0];
+  } else if (m >= maxM) {
+    visualBase = anchorR[anchorR.length-1];
+  } else {
+    let seg = 0;
+    for (let i = 0; i < anchors.length-1; i++) { if (m >= anchors[i].m && m <= anchors[i+1].m) { seg = i; break; } }
+    const m0 = anchors[seg].m, m1 = anchors[seg+1].m;
+    const r0 = anchorR[seg], r1 = anchorR[seg+1];
+    const u = (m - m0) / Math.max(1e-6, (m1 - m0));
+    const gammas = [1.4, 1.05, 0.95, 0.95, 0.98];
+    const gamma = gammas[Math.min(gammas.length-1, seg)] || 1.0;
+    const uAdj = Math.pow(u, gamma);
+    visualBase = r0 + (r1 - r0) * uAdj;
+  }
 
-  // normalize input size (0..1)
-  const tRaw = (sizeMeters - MIN_MET) / (MAX_MET - MIN_MET);
-  const t = Math.max(0, Math.min(1, tRaw));
-  // bias so mid values map near Hungary
-  const gamma = 1.8;
-  const tAdj = Math.pow(t, gamma);
-  // interpolate between Montenegro and Poland radii (Hungary sits mid-range)
-  const visualBase = radiusMontenegro + (radiusPoland - radiusMontenegro) * tAdj;
-
-    // Create ring geometry sized relative to visualBase (larger inner/outer multipliers so rings read bigger)
-  const ringInner = visualBase * 0.35;
-  const ringOuter = visualBase * 1.05;
-    const ringSegs = Math.max(32, Math.floor(16 + visualBase * 64));
-    const geo = new THREE.RingGeometry(ringInner, ringOuter, ringSegs);
+  // ring sizes scaled more aggressively for very large impacts
+  const ringInner = visualBase * 0.25;
+  const ringOuter = visualBase * 1.35;
+  const ringSegs = Math.max(32, Math.floor(32 + visualBase * 128));
+  // Create a smooth semicircular 'half-moon' sector using an extruded Shape so the silhouette
+  // is a filled curved semicircle (not a thin spinning ring). We'll build an outer semicircle
+  // and cut an inner semicircle as a hole, then extrude slightly to give a smooth curved plate.
+  const outer = new THREE.Shape();
+  outer.absarc(0, 0, ringOuter, 0, Math.PI, false);
+  outer.lineTo(-ringOuter, 0);
+  outer.lineTo(-ringOuter, -0.0001); // tiny nudge to ensure shape closure
+  // inner hole path (counter-clockwise to subtract)
+  const hole = new THREE.Path();
+  hole.absarc(0, 0, ringInner, 0, Math.PI, false);
+  // push hole into shape
+  outer.holes.push(hole);
+  // extrude to give a flat plate with a slight bevel for smoothness
+  const extrudeSettings = { depth: Math.max(0.01, ringOuter * 0.04), bevelEnabled: true, bevelThickness: Math.max(0.005, ringOuter * 0.01), bevelSize: Math.max(0.005, ringOuter * 0.01), bevelSegments: 3, steps: 1 };
+  const geo = new THREE.ExtrudeGeometry(outer, extrudeSettings);
     const mat = new THREE.MeshBasicMaterial({ color:0xff4400, side:THREE.DoubleSide, transparent:true, opacity:0.95, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: 1 });
     const ring = new THREE.Mesh(geo, mat);
 
@@ -1051,17 +1198,15 @@ class App {
     ring.quaternion.copy(quat);
     ring.position.copy(normal.clone().multiplyScalar(this.earthRadius));
 
-    // prepare base positions from geometry in ring-local plane coordinates and apply a random in-plane rotation
+    // prepare base positions from geometry in ring-local plane coordinates. Use the XY components
+    // (ignore extrusion depth) so expansion happens smoothly along the surface.
     const basePositions = [];
     const posAttr = geo.attributes.position;
-    const inPlaneAngle = Math.random() * Math.PI * 2;
-    const rotLocal = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), inPlaneAngle);
     for(let i=0;i<posAttr.count;i++){
       const vx = posAttr.getX(i);
       const vy = posAttr.getY(i);
-      const vz = posAttr.getZ(i);
-      const v = new THREE.Vector3(vx, vy, vz);
-      v.applyQuaternion(rotLocal);
+      // ignore z (depth) for in-plane base position
+      const v = new THREE.Vector3(vx, vy, 0);
       basePositions.push(v);
     }
 
@@ -1083,7 +1228,8 @@ class App {
     const effect = {
       mesh: ring,
       axis: normal.clone(),
-      spin: (0.02 + Math.random() * 0.06) * (Math.random() < 0.5 ? 1 : -1),
+      // no spin: semicircle should remain oriented and not spin like the earlier ring
+      spin: 0,
       center: position.clone(),
       u: u,
       v: v,
@@ -1181,21 +1327,55 @@ class App {
 
   // NASA fetchers kept as-is but bound to this
   async fetchAsteroidList(loadMore=false){
-    const apiKey = document.getElementById('apiKey')?.value.trim();
-    if(!apiKey) return alert('Enter NASA API key');
-    if(!loadMore) { this.neoPage = 0; this.asteroidList = []; document.getElementById('asteroidSelect').innerHTML = ''; }
+    const apiKeyEl = document.getElementById('apiKey');
+    const apiKey = apiKeyEl ? apiKeyEl.value.trim() : '';
+    const statusEl = document.getElementById('asteroidData');
+    if(!apiKey){ if(statusEl) statusEl.innerHTML = '<span style="color:orange">Enter NASA API key</span>'; return; }
+    if(!loadMore) { this.neoPage = 0; this.asteroidList = []; const sel = document.getElementById('asteroidSelect'); if(sel) sel.innerHTML = ''; }
     try{
-      const res = await fetch(`https://api.nasa.gov/neo/rest/v1/neo/browse?page=${this.neoPage||0}&size=20&api_key=${apiKey}`);
+      const url = `https://api.nasa.gov/neo/rest/v1/neo/browse?page=${this.neoPage||0}&size=20&api_key=${apiKey}`;
+      const res = await fetch(url);
+      if(!res.ok){
+        const txt = await res.text().catch(()=>`HTTP ${res.status}`);
+        console.error('Fetch failed', res.status, txt);
+        if(statusEl) statusEl.innerHTML = `<span style="color:red">Error fetching asteroids: HTTP ${res.status}</span>`;
+        return;
+      }
       const data = await res.json();
+      if(!data || !data.near_earth_objects){
+        console.error('Unexpected API response', data);
+        if(statusEl) statusEl.innerHTML = `<span style="color:red">Unexpected API response</span>`;
+        return;
+      }
       const select = document.getElementById('asteroidSelect');
       data.near_earth_objects.forEach(a=>{
         this.asteroidList = this.asteroidList || [];
         this.asteroidList.push(a);
-        const option = document.createElement('option'); option.value = a.id; option.textContent = `${a.name} (${a.estimated_diameter.meters.estimated_diameter_max.toFixed(0)} m)`; select.appendChild(option);
+        if(select){
+          // If custom list div is used, create clickable item entries
+          if(select.classList && select.classList.contains('custom-list')){
+            const item = document.createElement('div'); item.className = 'item'; item.dataset.id = a.id;
+            const txt = document.createElement('div'); txt.className = 'label-text'; txt.innerText = `${a.name} (${a.estimated_diameter.meters.estimated_diameter_max.toFixed(0)} m)`;
+            item.appendChild(txt);
+            // click selects the item; highlight by toggling 'selected'
+            item.addEventListener('click', (ev)=>{
+              // clear prior selection
+              const prev = select.querySelector('.item.selected'); if(prev) prev.classList.remove('selected');
+              item.classList.add('selected');
+              // store selected id on container for retrieval
+              select.dataset.selectedId = a.id;
+              // update asteroidData with brief info
+              const info = document.getElementById('asteroidData'); if(info) info.innerHTML = `<b>${a.name}</b><br>Diameter: ${a.estimated_diameter.meters.estimated_diameter_max.toFixed(1)} m`;
+            });
+            select.appendChild(item);
+          } else {
+            const option = document.createElement('option'); option.value = a.id; option.textContent = `${a.name} (${a.estimated_diameter.meters.estimated_diameter_max.toFixed(0)} m)`; select.appendChild(option);
+          }
+        }
       });
       this.neoPage = (this.neoPage||0) + 1;
-      document.getElementById('asteroidData').innerHTML = `Fetched ${this.asteroidList.length} asteroids (page ${this.neoPage})`;
-    }catch(err){ console.error(err); alert('Error fetching asteroids'); }
+      if(statusEl) statusEl.innerHTML = `Fetched ${this.asteroidList.length} asteroids (page ${this.neoPage})`;
+    }catch(err){ console.error('Error fetching asteroids', err); if(statusEl) statusEl.innerHTML = `<span style="color:red">Error fetching asteroids: ${err && err.message ? err.message : 'network error'}</span>`; }
   }
 
   async fetchAsteroidDetails(id){
@@ -1204,38 +1384,57 @@ class App {
   }
 
   async spawnSelectedAsteroid(){
-    const select = document.getElementById('asteroidSelect'); if(!select.value) return alert('Select an asteroid');
-    const details = await this.fetchAsteroidDetails(select.value) || (this.asteroidList||[]).find(a=>a.id===select.value);
+  const select = document.getElementById('asteroidSelect');
+  // support both native <select> (select.value) and custom-list (dataset.selectedId)
+  const selectedId = select ? (select.dataset && select.dataset.selectedId ? select.dataset.selectedId : (select.value || '')) : '';
+  if(!selectedId) return; // silently no-op when nothing selected
+  const details = await this.fetchAsteroidDetails(selectedId) || (this.asteroidList||[]).find(a=>a.id===selectedId);
     if(!details) return alert('Could not fetch asteroid details');
     const size = details.estimated_diameter.meters.estimated_diameter_max;
     const approach = parseFloat(details.close_approach_data[0].miss_distance.kilometers);
     const velocity = parseFloat(details.close_approach_data[0].relative_velocity.kilometers_per_second);
     document.getElementById('asteroidData').innerHTML = `<b>${details.name}</b><br>Diameter: ${size.toFixed(1)} m<br>Miss distance: ${approach.toFixed(0)} km<br>Velocity: ${velocity.toFixed(1)} km/s`;
-    const meteorGeo = new THREE.SphereGeometry(1, 16, 16);
-    const meteorMat = new THREE.MeshStandardMaterial({ color:0xaaaaaa, metalness:0.1, roughness:0.6 });
-    const meteor = new THREE.Mesh(meteorGeo, meteorMat);
-    const approachMeters = approach * 1000;
-    meteor.position.set(0,0, approachMeters / this.SCENE_SCALE);
-    const dir = new THREE.Vector3(0,0,-1).normalize();
-    const density = 3000; const volume = (4/3)*Math.PI*Math.pow(size/2,3); const mass = density*volume; const area = Math.PI*Math.pow(size/2,2);
-  this.scene.add(meteor);
-  const meterToScene = 1/this.SCENE_SCALE;
-  const radiusScene = (size / 2) * meterToScene; // size is diameter in meters
-  meteor.scale.setScalar(Math.max(radiusScene, 1e-6));
-  const label = this.createLabel(`${details.name} (${size.toFixed(0)} m)`, meteor.position);
-    // Frame camera to the spawned meteor: position the camera at a distance proportional to size
+    // create meteor mesh using the same generator so visual mapping applies
+    const meteor = this.createMeteorMesh(size, Math.floor(Math.random()*0xffffffff));
+    // spawn near the mouse cursor: raycast into the scene and place the meteor a bit behind the hit point (toward the camera)
+    // default fallback: spawn 1.2 units in front of camera
+    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(this.camera.quaternion).normalize();
+    let spawnPos = this.camera.position.clone().add(forward.clone().multiplyScalar(1.2));
     try{
-      const distanceMeters = Math.max(size * 10, 1000); // aim for ~10x diameter or 1km min
-      const distanceScene = distanceMeters / this.SCENE_SCALE;
-      const meteorWorldPos = meteor.position.clone();
-      // camera end position: along +Z from meteor so it looks toward the origin
-      const endCamPos = meteorWorldPos.clone().add(new THREE.Vector3(0, distanceScene * 0.7, distanceScene * 1.2));
-      this.frameCameraTo(meteorWorldPos, endCamPos, 1200);
-    }catch(e){ console.warn('Framing failed', e); }
+      // use stored this.mouse (updated in onMouseMove). Raycast to find intersection point with either Earth or a plane in front of camera
+      this.raycaster.setFromCamera(this.mouse, this.camera);
+      const targets = [];
+      if(this.earth) targets.push(this.earth);
+      for(const m of (this.meteors||[])) if(m && m.mesh) targets.push(m.mesh);
+      const hits = targets.length ? this.raycaster.intersectObjects(targets, true) : [];
+      if(hits && hits.length){
+        const hitPoint = hits[0].point.clone();
+        // place meteor a bit behind the hit point towards the camera so it appears between camera and hit
+        const backOff = Math.min( (this.camera.position.distanceTo(hitPoint) * 0.25), 5 ); // up to 5 scene units
+        spawnPos = hitPoint.clone().sub(this.camera.position).normalize().multiplyScalar(-backOff).add(hitPoint);
+      } else {
+        // if nothing hit, intersect a plane 5 units in front of camera (same as earlier plane logic)
+        const planeZ = new THREE.Plane(new THREE.Vector3(0,0,-1).applyQuaternion(this.camera.quaternion), -5);
+        const ip = new THREE.Vector3();
+        this.raycaster.ray.intersectPlane(planeZ, ip);
+        if(ip) spawnPos = ip.clone().add(this.camera.position.clone().sub(ip).normalize().multiplyScalar(-0.5));
+      }
+    }catch(e){ /* fallback to camera-front spawnPos already set */ }
+    meteor.position.copy(spawnPos);
+    // compute aim direction toward predictedImpactMarker if available, else forward
+    const aimDir = (this.predictedImpactMarker && this.predictedImpactMarker.visible) ? this.predictedImpactMarker.position.clone().sub(meteor.position).normalize() : forward.clone();
+    const density = 3000; const volume = (4/3)*Math.PI*Math.pow(size/2,3); const mass = density*volume; const area = Math.PI*Math.pow(size/2,2);
+    this.scene.add(meteor);
+    const label = this.createLabel(`${details.name} (${size.toFixed(0)} m)`, meteor.position);
+    // Attach asteroid id metadata so labels can be preserved after impact
+    meteor.asteroidId = details.id;
+    if(label) label.asteroidId = details.id;
+    // Do NOT auto-frame the camera on spawn per user preference (disable camera rotate/centering)
   // show size in UI
   const selLabel = document.getElementById('asteroidData'); if(selLabel) selLabel.innerHTML += `<div>Spawned size: ${size.toFixed(0)} m</div>`;
-    const physVel = dir.clone().multiplyScalar(velocity*1000);
-    this.meteors.push({ mesh:meteor, velocity:dir.multiplyScalar(velocity/50), physVelocity:physVel, active:true, mass, area, size });
+  const physVel = aimDir.clone().multiplyScalar(velocity*1000);
+  const sceneVel = aimDir.clone().multiplyScalar((velocity) * (1/this.SCENE_SCALE) * 0.6);
+  this.meteors.push({ mesh:meteor, velocity:sceneVel, physVelocity:physVel, active:true, mass, area, size, label });
   }
 
   loadHighResEarthTexture(){
