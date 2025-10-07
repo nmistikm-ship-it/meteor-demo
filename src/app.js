@@ -288,6 +288,20 @@ class App {
     if (el('highResTex')) el('highResTex').onclick = () => this.loadHighResEarthTexture();
     const uploadInput = el('uploadTex');
     if (uploadInput) uploadInput.addEventListener('change', (ev) => this.onUploadTexture(ev));
+    // Make the decorative top upload button non-clickable and wire the visible "Choose File..." button
+    const uploadTop = el('uploadStackTop');
+    const uploadBottom = el('uploadStackBottom');
+    if(uploadTop){
+      // purely decorative: disable pointer events so it cannot be clicked
+      uploadTop.style.pointerEvents = 'none';
+      uploadTop.setAttribute('aria-hidden', 'true');
+    }
+    if(uploadBottom && uploadInput){
+      // clicking the visible bottom button should open the native file picker
+      uploadBottom.onclick = (e) => { try{ e.preventDefault(); uploadInput.click(); }catch(err){ console.error('failed to open file picker', err); } };
+      // also prevent mousedown focusing behavior that causes scroll
+      uploadBottom.onmousedown = (e) => { e.preventDefault(); };
+    }
     const realBtn = el('toggleRealism'); if(realBtn) realBtn.onclick = (e)=>{ this.realistic = !this.realistic; e.target.innerText = this.realistic? 'Disable Realistic Physics' : 'Enable Realistic Physics'; };
 
     // When the API key input is focused we should not allow firing via keyboard and
@@ -1326,8 +1340,8 @@ class App {
   async fetchAsteroidList(loadMore=false){
     const apiKeyEl = document.getElementById('apiKey');
     const apiKey = apiKeyEl ? apiKeyEl.value.trim() : '';
-    const statusEl = document.getElementById('asteroidData');
-    if(!apiKey){ if(statusEl) statusEl.innerHTML = '<span style="color:orange">Enter NASA API key</span>'; return; }
+  const statusEl = document.getElementById('asteroidData');
+  if(!apiKey){ /* intentionally do not write status text into asteroidData */ return; }
     if(!loadMore) { this.neoPage = 0; this.asteroidList = []; const sel = document.getElementById('asteroidSelect'); if(sel) sel.innerHTML = ''; }
     try{
       const url = `https://api.nasa.gov/neo/rest/v1/neo/browse?page=${this.neoPage||0}&size=20&api_key=${apiKey}`;
@@ -1335,13 +1349,13 @@ class App {
       if(!res.ok){
         const txt = await res.text().catch(()=>`HTTP ${res.status}`);
         console.error('Fetch failed', res.status, txt);
-        if(statusEl) statusEl.innerHTML = `<span style="color:red">Error fetching asteroids: HTTP ${res.status}</span>`;
+  // do not display fetch status text in the asteroidData element
         return;
       }
       const data = await res.json();
       if(!data || !data.near_earth_objects){
         console.error('Unexpected API response', data);
-        if(statusEl) statusEl.innerHTML = `<span style="color:red">Unexpected API response</span>`;
+  // do not display fetch status text in the asteroidData element
         return;
       }
       const select = document.getElementById('asteroidSelect');
@@ -1372,9 +1386,9 @@ class App {
           }
         }
       });
-      this.neoPage = (this.neoPage||0) + 1;
-      if(statusEl) statusEl.innerHTML = `Fetched ${this.asteroidList.length} asteroids (page ${this.neoPage})`;
-    }catch(err){ console.error('Error fetching asteroids', err); if(statusEl) statusEl.innerHTML = `<span style="color:red">Error fetching asteroids: ${err && err.message ? err.message : 'network error'}</span>`; }
+  this.neoPage = (this.neoPage||0) + 1;
+  // intentionally avoid writing a summarized fetch status into the asteroidData element
+  }catch(err){ console.error('Error fetching asteroids', err); /* do not write error summary into asteroidData */ }
   }
 
   async fetchAsteroidDetails(id){
@@ -1440,7 +1454,17 @@ class App {
     // First ask user for a USGS (or other) URL to prioritize
     const userUrl = window.prompt('Enter a USGS or remote Earth texture URL (leave blank to use defaults):', '');
     const urls = [];
-    if(userUrl && userUrl.trim()) urls.push(userUrl.trim());
+    // If the user entered a URL, prefer it first
+    if(userUrl && userUrl.trim()) {
+      urls.push(userUrl.trim());
+    } else if(userUrl === null) {
+      // user pressed Cancel: attempt to restore the local project texture first
+      urls.push('./earth_texture.jpg');
+    } else {
+      // user left blank: fall back to defaults (remote)
+      // try local default first (project root) to be conservative
+      urls.push('./earth_texture.jpg');
+    }
     // defaults (NASA Blue Marble, then fallback world map)
     urls.push('https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_2012044_lrg.jpg');
     urls.push('https://upload.wikimedia.org/wikipedia/commons/8/80/World_map_-_low_resolution.svg');
@@ -1459,6 +1483,8 @@ class App {
             tex.minFilter = THREE.LinearMipmapLinearFilter;
             tex.magFilter = THREE.LinearFilter;
             tex.generateMipmaps = true;
+            // assign texture and ensure material updates. If the load was a local file but failed (xhr/cors),
+            // the loader will call the error handler which continues to the next URL.
             earth.material.map = tex;
             earth.material.needsUpdate = true;
           }
