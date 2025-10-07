@@ -119,6 +119,39 @@ canvas { display:block; }
 #ui input[type="range"]#simSpeed::-webkit-slider-thumb { background: linear-gradient(180deg, #ffb1e6, #ff73c9); }
 #ui input[type="range"]#simSpeed::-moz-range-thumb { background: linear-gradient(180deg, #ffb1e6, #ff73c9); }
 
+/* Upload row: Choose file + Reset default flush, no gap */
+/* upload stack layout: top decorative with rounded top corners, bottom row buttons flush under it */
+.upload-row { display:flex; gap:0; /* flush buttons */ }
+.upload-row { margin-top: -1px; /* pull up to overlap the top decorative button by 1px to hide sliver */ }
+.upload-row button { flex:1; margin:0; border-radius: 0; border-top: none; }
+.upload-row button:first-child { border-right: 1px solid rgba(0,0,0,0.06); }
+
+/* top decorative button should have rounded top corners and square bottom so it visually connects */
+.upload-stack { border-radius: 8px; padding-bottom: 0px; }
+.upload-stack .upload-top { border-radius: 8px 8px 0 0; display:block; width:100%; position:relative; z-index:2; background: linear-gradient(180deg, #fff8fb, #ffe6f2); border: none; }
+
+/* bottom-left button: only bottom-left rounded */
+.upload-row button:first-child { border-radius: 0 0 0 8px; }
+/* bottom-right button: only bottom-right rounded */
+.upload-row button:last-child { border-radius: 0 0 8px 0; }
+
+/* Blush / light pink reset button */
+.reset-earth, #ui .reset-earth { background: linear-gradient(180deg, #fff8fb, #ffe6f2); color: #4a0024; border: 1px solid rgba(220,160,185,0.10); box-shadow: 0 3px 10px rgba(220,180,200,0.06); padding: 10px; font-weight:700; }
+.reset-earth:hover, #ui .reset-earth:hover { transform: translateY(-1px); box-shadow: 0 7px 16px rgba(220,160,185,0.08); }
+
+/* Expose color classes for cursors so JS can toggle them to remain visible on any background */
+.cursor-blue { background: #2ea3ff !important; border-color: rgba(10,60,120,0.95) !important; }
+.cursor-black { background: #000 !important; border-color: rgba(255,255,255,0.95) !important; }
+.cursor-white { background: #fff !important; border-color: rgba(0,0,0,0.95) !important; }
+.cursor-yellow { background: #ffea6b !important; border-color: rgba(90,60,0,0.95) !important; }
+.cursor-beige { background: #f5e0c7 !important; border-color: rgba(60,40,20,0.95) !important; }
+.cursor-brown { background: #9b5a2b !important; border-color: rgba(30,20,10,0.95) !important; }
+.cursor-green { background: #8eff8a !important; border-color: rgba(10,40,20,0.95) !important; }
+.cursor-gray { background: #bfc7cc !important; border-color: rgba(20,20,20,0.95) !important; }
+
+/* Standout cursor (teal/cyan) - chosen to contrast well against beige, blue, yellow, brown, black, white, gray and green; not orange */
+.cursor-standout { background: #00d0ff !important; border-color: rgba(0,80,120,0.95) !important; box-shadow: 0 0 8px rgba(0,208,255,0.18); }
+
 /* Meteor speed: lilac theme */
 #ui input[type="range"]#speed { --fill: #c49cff; }
 #ui input[type="range"]#speed::-webkit-slider-thumb { background: linear-gradient(180deg, #e6d0ff, #b88cff); }

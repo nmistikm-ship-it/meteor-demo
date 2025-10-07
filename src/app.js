@@ -98,8 +98,9 @@ class App {
       position: 'fixed', left: '0px', top: '0px',
       width: '18px', height: '18px', transform: 'translate(-50%, -50%)',
       borderRadius: '50%', background: 'transparent',
-      border: '2px solid rgba(255,170,0,0.95)', pointerEvents: 'none', display: 'none', zIndex: 2000
+      border: '2px solid rgba(0,208,255,0.95)', pointerEvents: 'none', display: 'none', zIndex: 2000
     });
+    aimEl.classList.add('cursor-standout');
     document.body.appendChild(aimEl);
     this.aimCursor = aimEl;
     // void cursor: small dot shown only when pointer is over empty space
@@ -108,8 +109,9 @@ class App {
     Object.assign(voidEl.style, {
       position: 'fixed', left: '0px', top: '0px', width: '8px', height: '8px',
       transform: 'translate(-50%, -50%)', borderRadius: '50%',
-      background: 'rgba(255,170,0,0.9)', pointerEvents: 'none', display: 'none', zIndex: 1999
+      background: 'rgba(0,208,255,0.95)', pointerEvents: 'none', display: 'none', zIndex: 1999
     });
+    voidEl.classList.add('cursor-standout');
     document.body.appendChild(voidEl);
     this.voidCursor = voidEl;
     this._pointerOverCanvas = false; // track if the mouse is currently over the renderer canvas
@@ -302,6 +304,41 @@ class App {
       // also prevent mousedown focusing behavior that causes scroll
       uploadBottom.onmousedown = (e) => { e.preventDefault(); };
     }
+    // Reset Earth Texture To Default button (next to choose file)
+    const resetEarthBtn = el('resetEarth');
+    if(resetEarthBtn){
+      resetEarthBtn.onclick = (e) => {
+        // attempt to reload the project-local earth_texture.jpg
+        try{
+          const loader = new THREE.TextureLoader();
+          loader.load('./earth_texture.jpg', tex=>{
+            const earth = this.scene.children.find(c=>c.geometry && c.geometry.type==='SphereGeometry');
+            if(earth && earth.material){
+              if(earth.material.color) earth.material.color.setHex(0xffffff);
+              tex.encoding = THREE.sRGBEncoding;
+              tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+              tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = true;
+              tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
+              earth.material.map = tex; earth.material.needsUpdate = true;
+            }
+          }, undefined, err=>{ console.warn('Failed to reload local earth texture', err); alert('Failed to load default earth texture'); });
+        }catch(err){ console.error('reset earth texture failed', err); }
+      };
+      resetEarthBtn.onmousedown = (e) => { e.preventDefault(); };
+    }
+
+    // Cursor color utility: call app.setCursorColor('blue'|'black'|'white'|'yellow'|'beige'|'brown'|'green'|'gray')
+    this.setCursorColor = (name) => {
+      if(!this.aimCursor || !this.voidCursor) return;
+      // clear existing cursor-* classes
+      const classes = ['cursor-blue','cursor-black','cursor-white','cursor-yellow','cursor-beige','cursor-brown','cursor-green','cursor-gray'];
+      classes.forEach(c=>{ this.aimCursor.classList.remove(c); this.voidCursor.classList.remove(c); });
+      const cls = `cursor-${name}`;
+      this.aimCursor.classList.add(cls);
+      this.voidCursor.classList.add(cls);
+      // ensure border is present for visibility
+      this.aimCursor.style.borderWidth = '2px'; this.voidCursor.style.borderWidth = '2px';
+    };
     const realBtn = el('toggleRealism'); if(realBtn) realBtn.onclick = (e)=>{ this.realistic = !this.realistic; e.target.innerText = this.realistic? 'Disable Realistic Physics' : 'Enable Realistic Physics'; };
 
     // When the API key input is focused we should not allow firing via keyboard and
@@ -347,6 +384,7 @@ class App {
         tex.minFilter = THREE.LinearMipmapLinearFilter;
         tex.magFilter = THREE.LinearFilter;
         tex.generateMipmaps = true;
+        tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
         earth.material.map = tex; earth.material.needsUpdate = true;
         console.log('Loaded local earth texture:', localPath);
       }
@@ -359,22 +397,89 @@ class App {
   onUploadTexture(ev) {
     const f = ev.target.files && ev.target.files[0];
     if(!f) return;
+    // Preprocess the image in an offscreen canvas before creating a texture to avoid
+    // seams, non-power-of-two artifacts, and visible pixelation.
+    const img = new Image();
     const url = URL.createObjectURL(f);
-    const loader = new THREE.TextureLoader();
-    loader.load(url, tex=>{
-      tex.encoding = THREE.sRGBEncoding;
-      tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
-      if(this.scene && this.scene.children){
-        const earth = this.scene.children.find(c=>c.geometry && c.geometry.type==='SphereGeometry');
-        if(earth && earth.material){
-          // ensure material does not tint the texture
-          if(earth.material.color) earth.material.color.setHex(0xffffff);
-          tex.encoding = THREE.sRGBEncoding;
-          earth.material.map = tex; earth.material.needsUpdate = true;
+    img.onload = () => {
+      try{
+        // Desired equirectangular aspect ratio is 2:1 (width:height). We'll
+        // crop the image center if needed and then resample to a power-of-two width.
+        const srcW = img.naturalWidth || img.width;
+        const srcH = img.naturalHeight || img.height;
+        const targetAspect = 2.0;
+        let cropW = srcW, cropH = srcH;
+        const srcAspect = srcW / srcH;
+        if(srcAspect > targetAspect){
+          // too wide -> crop left/right
+          cropH = srcH; cropW = Math.round(srcH * targetAspect);
+        } else if(srcAspect < targetAspect){
+          // too tall -> crop top/bottom
+          cropW = srcW; cropH = Math.round(srcW / targetAspect);
         }
-      }
+        const cropX = Math.max(0, Math.floor((srcW - cropW) / 2));
+        const cropY = Math.max(0, Math.floor((srcH - cropH) / 2));
+
+        // choose target size: power-of-two width, cap at 4096 for performance
+        const maxDim = 4096;
+        // pick nearest power of two for cropW, but not larger than maxDim
+        const pow2 = (v)=>{ let p=1; while(p<v) p<<=1; return p; };
+        let targetW = Math.min(maxDim, pow2(cropW));
+        // if pow2(cropW) is much larger than cropW, try the previous pow2 to avoid upscaling too aggressively
+        if(targetW > cropW * 1.5) targetW = targetW >> 1;
+        targetW = Math.max(256, targetW); // minimum reasonable size
+        const targetH = Math.round(targetW / targetAspect);
+
+        // high-quality resize using incremental downscale/upscale approach
+        const resampleTo = (sourceCanvas, w, h) => {
+          // use a sequence of downscales by half to improve quality on canvas
+          let oc = sourceCanvas;
+          const tmp = document.createElement('canvas');
+          const ctxTmp = tmp.getContext('2d');
+          let ow = oc.width, oh = oc.height;
+          // repeatedly downscale by half until near target
+          while(ow * 0.5 > w){
+            tmp.width = Math.max(w, Math.floor(ow * 0.5)); tmp.height = Math.max(h, Math.floor(oh * 0.5));
+            ctxTmp.clearRect(0,0,tmp.width,tmp.height);
+            ctxTmp.drawImage(oc, 0, 0, ow, oh, 0, 0, tmp.width, tmp.height);
+            // swap
+            oc = document.createElement('canvas'); oc.width = tmp.width; oc.height = tmp.height; oc.getContext('2d').drawImage(tmp,0,0);
+            ow = oc.width; oh = oc.height;
+          }
+          // final draw into target-sized canvas (may upscale slightly)
+          const final = document.createElement('canvas'); final.width = w; final.height = h;
+          final.getContext('2d').drawImage(oc, 0, 0, ow, oh, 0, 0, w, h);
+          return final;
+        };
+
+        // create source canvas with cropping
+        const srcCanvas = document.createElement('canvas'); srcCanvas.width = cropW; srcCanvas.height = cropH;
+        const sctx = srcCanvas.getContext('2d');
+        sctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+        const finalCanvas = resampleTo(srcCanvas, targetW, targetH);
+
+        // Create a THREE texture from the processed canvas
+        const tex = new THREE.CanvasTexture(finalCanvas);
+        tex.encoding = THREE.sRGBEncoding;
+        tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+        tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter;
+        tex.generateMipmaps = true; tex.needsUpdate = true;
+
+        if(this.scene && this.scene.children){
+          const earth = this.scene.children.find(c=>c.geometry && c.geometry.type==='SphereGeometry');
+          if(earth && earth.material){
+            if(earth.material.color) earth.material.color.setHex(0xffffff);
+            earth.material.map = tex; earth.material.needsUpdate = true;
+          }
+        }
+
+      }catch(err){ console.error('Processing uploaded texture failed', err); alert('Processing uploaded texture failed'); }
       URL.revokeObjectURL(url);
-    }, undefined, err=>{ console.error('Local texture load failed', err); alert('Local texture failed to load'); });
+    };
+    img.onerror = (e) => { URL.revokeObjectURL(url); alert('Failed to read uploaded image'); };
+    img.src = url;
   }
 
   onMouseMove(event) {
@@ -1483,6 +1588,7 @@ class App {
             tex.minFilter = THREE.LinearMipmapLinearFilter;
             tex.magFilter = THREE.LinearFilter;
             tex.generateMipmaps = true;
+            tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
             // assign texture and ensure material updates. If the load was a local file but failed (xhr/cors),
             // the loader will call the error handler which continues to the next URL.
             earth.material.map = tex;
